@@ -144,6 +144,11 @@ ENV/
 env.bak/
 venv.bak/
 
+# Project-specific virtual environments
+spyoncino_env/
+*_env/
+*-env/
+
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -205,3 +210,44 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Spyoncino-specific files
+# Sensitive configuration - never commit
+config/secrets.json
+*.secrets.json
+*.secret
+secrets.json
+*.key
+*.token
+
+# Runtime data and recordings
+recordings/
+*.gif
+*.db
+*.log
+temp_*
+tmp_*
+
+# Model files (can be large, download separately if needed)
+*.pt
+*.pth
+*.onnx
+*.h5
+*.ckpt
+# Note: Model files are excluded to keep repository size small
+# Users should download models separately or use model downloading in code
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Personal development files
+TODO.md
