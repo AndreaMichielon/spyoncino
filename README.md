@@ -270,6 +270,7 @@ ls /dev/video*  # Linux - list cameras
 - **Person Recognition**: YOLOv8n with confidence filtering
 - **GIF Optimization**: Temporal importance sampling, 640px max
 - **Storage**: Auto-cleanup based on age and disk space
+- **Analytics**: SQLAlchemy ORM with connection pooling for event tracking
 - **Security**: Rate limiting, input sanitization, encrypted secrets
 - **PyTorch**: Auto-detects GPU, uses optimized index URLs
 
