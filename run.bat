@@ -99,10 +99,32 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if defined USE_PIP (
-    pip install -e .
+REM Detect GPU and choose appropriate PyTorch installation
+set "INDEX_URL="
+
+if not defined SPYONCINO_PYTORCH (
+    echo Detecting hardware capabilities...
+    nvidia-smi >nul 2>&1
+    if errorlevel 1 (
+        echo   No NVIDIA GPU detected - installing CPU-only PyTorch
+        set "INDEX_URL=--index-url https://download.pytorch.org/whl/cpu"
+    ) else (
+        echo   NVIDIA GPU detected - installing CUDA-enabled PyTorch
+        set "INDEX_URL=--index-url https://download.pytorch.org/whl/cu118"
+    )
 ) else (
-    uv pip install -e .
+    echo Using manual PyTorch selection: %SPYONCINO_PYTORCH%
+    if "%SPYONCINO_PYTORCH%"=="cuda" (
+        set "INDEX_URL=--index-url https://download.pytorch.org/whl/cu118"
+    ) else if "%SPYONCINO_PYTORCH%"=="cpu" (
+        set "INDEX_URL=--index-url https://download.pytorch.org/whl/cpu"
+    )
+)
+
+if defined USE_PIP (
+    pip install -e . %INDEX_URL%
+) else (
+    uv pip install -e . %INDEX_URL%
 )
 
 if errorlevel 1 (

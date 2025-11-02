@@ -35,8 +35,6 @@
 
 #### Quick Start (Recommended)
 
-Use the automated launcher that handles everything for you:
-
 **Windows:**
 ```bash
 run.bat
@@ -52,33 +50,45 @@ The launcher will automatically:
 - ✅ Check Python version (3.12+ required)
 - ✅ Install UV package manager if missing
 - ✅ Create virtual environment
+- ✅ **Auto-detect GPU and install optimal PyTorch version**
 - ✅ Install all dependencies
 - ✅ Run Spyoncino
 
+To manually override GPU detection:
+```bash
+export SPYONCINO_PYTORCH=cpu  # Linux/Mac
+set SPYONCINO_PYTORCH=cpu     # Windows
+./run.sh  # or run.bat
+```
+
 #### Manual Installation
 
-1. **Install PyTorch**
+1. **Create and activate virtual environment**
    ```bash
-   # GPU (recommended)
-   uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-   
-   # CPU only
-   uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-   ```
-
-2. **Install dependencies**
-   ```bash
-   # Create and activate virtual environment
    uv venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+
+2. **Install Spyoncino with PyTorch**
    
-   # Install the package and dependencies
+   **GPU with CUDA:**
+   ```bash
+   uv pip install -e . --index-url https://download.pytorch.org/whl/cu118
+   ```
+   
+   **CPU only:**
+   ```bash
+   uv pip install -e . --index-url https://download.pytorch.org/whl/cpu
+   ```
+   
+   **Standard:**
+   ```bash
    uv pip install -e .
    ```
 
 3. **Configure system**
    
-   Create `config/setting.json` (non-sensitive settings):
+   Create `config/setting.json`:
    ```json
    {
      "USB_PORT": 0,
@@ -92,12 +102,12 @@ The launcher will automatically:
    }
    ```
    
-   Create `config/secrets.json` from the example template:
+   Create `config/secrets.json`:
    ```bash
    cp config/secrets.json.example config/secrets.json
    ```
    
-   Then edit `config/secrets.json` with your sensitive data:
+   Edit with your credentials:
    ```json
    {
      "TELEGRAM_TOKEN": "your_bot_token_here",
@@ -110,39 +120,35 @@ The launcher will automatically:
 
 4. **Secure the secrets file**
    ```bash
-   chmod 600 config/secrets.json  # Restrict file permissions
-   # Note: secrets.json is already in .gitignore
+   chmod 600 config/secrets.json
    ```
 
 5. **Run**
    ```bash
-   # Option 1: Automated launcher (recommended)
    run.bat          # Windows
    ./run.sh         # Linux/Mac
    
-   # Option 2: Using the installed command
+   # Or directly:
    spyoncino
-   
-   # Option 3: Direct Python execution
-   python src/spyoncino/run.py config
    ```
 
 ## Security Setup
 
 ### First-Time Configuration
-1. Start the bot: `python src/spyoncino/run.py config`
+1. Start the bot
 2. Message your bot in Telegram
-3. Run `/setup YourSecurePassword123!`
-4. You become the superuser with full admin access
+3. Run `/setup YourSecurePassword123!` (you become superuser)
 
-### User Management
-- **Superuser**: Full system control, can manage other users
-- **Whitelisted Users**: Basic system access (view recordings, snapshots)
-- **Unauthorized Users**: Blocked with rate limiting
+### User Roles
+- **Superuser**: Full control, manages users
+- **Whitelisted Users**: View recordings, snapshots
+- **Unauthorized**: Blocked with rate limiting
 
 ## Usage
 
-### Essential Commands
+### Telegram Bot Commands
+
+**Essential:**
 | Command | Function |
 |---------|----------|
 | `/setup <password>` | First-time superuser setup |
@@ -152,21 +158,19 @@ The launcher will automatically:
 | `/snap` | Live camera snapshot |
 | `/config <key> <value>` | Runtime configuration |
 
-### Configuration Examples
+**Configuration Examples:**
 ```
 /config interval 1.5          # Faster detection
 /config confidence 0.15       # More sensitive AI
 /config gif_motion on         # Enable motion GIFs
 ```
 
-### Admin Commands (Superuser Only)
+**Admin (Superuser Only):**
 - `/whitelist_add <user_id>` - Authorize users
 - `/whitelist_remove <user_id>` - Remove user access  
 - `/whitelist_list` - Show authorized users
 - `/cleanup` - Force file cleanup
-
-### User Info
-- `/whoami` - Show your user ID and authorization status
+- `/whoami` - Show your user ID and status
 
 ## Configuration Files
 
@@ -192,18 +196,16 @@ The launcher will automatically:
 
 ### Multi-layer Protection
 - **Password-based setup**: Prevents unauthorized superuser access
-- **Rate limiting**: Blocks brute force attempts (5 attempts = temporary lockout)
-- **Input sanitization**: Prevents command injection attacks
-- **Separate secrets file**: Sensitive data isolated from main config
+- **Rate limiting**: 5 failed attempts = temporary lockout
+- **Input sanitization**: Prevents command injection
+- **Separate secrets file**: Isolated sensitive data
 - **User whitelisting**: Granular access control
 
-### Environment Variable Support
-Alternative to `config/secrets.json`:
+**Alternative: Environment Variables**
 ```bash
 export TELEGRAM_BOT_TOKEN="your_token"
 export SECURITY_SETUP_PASSWORD="your_password"
 export TELEGRAM_CHAT_ID="123456789"
-python run.py
 ```
 
 ## Architecture
@@ -225,15 +227,20 @@ Entry Point → Telegram Bot ↔ Event Manager ↔ Security System
 
 **Camera not found:**
 ```bash
-# List available cameras
-ls /dev/video*  # Linux
-# Try USB_PORT values: 0, 1, 2...
+ls /dev/video*  # Linux - list cameras
+# Try USB_PORT: 0, 1, 2...
 ```
 
 **High resource usage:**
 - Increase `INTERVAL` for less frequent checks
 - Reduce camera resolution in settings
 - Lower `MAX_BATCH_SIZE` for GPU memory
+
+**PyTorch installation issues:**
+- For manual control: `export SPYONCINO_PYTORCH=cpu` or `=cuda`
+- Check GPU drivers: `nvidia-smi` should show your GPU
+- For CPU-only: `uv pip install -e . --index-url https://download.pytorch.org/whl/cpu`
+- For CUDA: `uv pip install -e . --index-url https://download.pytorch.org/whl/cu118`
 
 **Bot unresponsive:**
 - Verify `TELEGRAM_TOKEN` is correct
@@ -242,38 +249,29 @@ ls /dev/video*  # Linux
 
 **Security issues:**
 - Ensure `config/secrets.json` has proper permissions (600)
-- Check that secrets file is in `.gitignore` (already configured)
 - Use strong setup password
 - Monitor failed login attempts in logs
 
-## Deployment Best Practices
+## Deployment
 
-1. **Production Setup:**
-   - Use environment variables instead of `config/secrets.json`
-   - Set up proper file permissions
-   - Configure firewall rules
-   - Enable system logging
+**Production:**
+- Use environment variables for secrets
+- Set file permissions: `chmod 600 config/secrets.json`
+- Regularly review logs and user whitelist
 
-2. **Access Control:**
-   - Use strong setup password
-   - Regularly review user whitelist
-   - Monitor authentication logs
-   - Consider using dedicated notification chat
-
-3. **Maintenance:**
-   - Regular log review
-   - Storage cleanup monitoring
-   - Update dependencies periodically
-   - Backup configuration files (excluding secrets)
+**Maintenance:**
+- Monitor storage usage
+- Update dependencies: `uv pip install --upgrade -e .`
+- Backup `config/setting.json` only
 
 ## Technical Details
 
 - **Motion Detection**: Background subtraction with configurable thresholds
-- **Person Recognition**: YOLOv8n with confidence filtering and anti-spam
-- **GIF Optimization**: Temporal importance sampling with 640px max resolution
-- **Storage Management**: Automatic cleanup based on age and disk space
-- **Error Handling**: Comprehensive logging with Unicode-safe formatting
-- **Security**: Rate limiting, input sanitization, encrypted secrets management
+- **Person Recognition**: YOLOv8n with confidence filtering
+- **GIF Optimization**: Temporal importance sampling, 640px max
+- **Storage**: Auto-cleanup based on age and disk space
+- **Security**: Rate limiting, input sanitization, encrypted secrets
+- **PyTorch**: Auto-detects GPU, uses optimized index URLs
 
 ## Contributing
 

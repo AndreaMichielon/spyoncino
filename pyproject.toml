@@ -24,7 +24,11 @@ dependencies = [
     "opencv-python-headless>=4.12.0.88",
     "python-telegram-bot[job-queue]==20.6",
     "ultralytics>=8.3.184",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
 ]
+
+# PyTorch variants (CUDA/CPU) are selected via --index-url in launcher scripts
 
 [project.scripts]
 spyoncino = "spyoncino.run:main"
