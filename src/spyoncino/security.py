@@ -491,23 +491,30 @@ class SecuritySystem:
         """
         Handle detected motion event by recording and processing frames.
         
-        This method:
-        1. Captures frames from the moment of detection
-        2. Processes frames for person detection
-        3. Queues background processing for GIF creation
+        Uses streaming generator pattern with optimal early-exit:
+        1. Yields frames one at a time during capture
+        2. Processes person detection in mini-batches (with caching)
+        3. Early exit when person found (skips YOLO on remaining frames)
+        4. Applies overlays: cached for processed, fresh YOLO for remaining
         
         Raises:
             RuntimeError: If frame capture fails
         """
         try:
-            # Capture the moment
-            frames = self._record_frames()
+            # Stream frames and detect person with early exit
+            has_person, frames, cached_detections, frames_processed = self._collect_and_detect_person()
+            
             if not frames:
                 self.logger.warning("No frames captured for event")
                 return
             
-            # Process and analyze
-            has_person, processed_frames = self._process_frames(frames)
+            # Apply overlays: uses cache + processes remaining frames
+            processed_frames = self._apply_frame_overlays(
+                frames, has_person, cached_detections, frames_processed
+            )
+            
+            # Cleanup raw frames immediately
+            del frames
             
             # Queue for complete processing
             event_data = {
@@ -623,66 +630,87 @@ class SecuritySystem:
         self.on_motion = handler
         self.logger.info("Motion event handler registered")
         
-    def _record_frames(self) -> List[np.ndarray]:
+    def _record_frames_streaming(self):
         """
-        Record a sequence of frames for event processing.
+        Generator that yields frames one at a time for streaming processing.
         
-        Returns:
-            List of captured frames (may be empty if capture fails)
+        Yields:
+            np.ndarray: Individual frames as they are captured
         """
-        frames = []
         for _ in range(self.record_frames):
             if not self.is_active:
                 break
+            
             frame = self.capture.grab()
             if frame is not None:
-                frames.append(frame)
+                yield frame.copy()
             else:
                 time.sleep(0.01)
-        self.logger.debug(f"Recorded {len(frames)}/{self.record_frames} frames")
-        return frames
+    
+    def _collect_and_detect_person(self) -> Tuple[bool, List[np.ndarray], List[Dict], int]:
+        """
+        Collect frames from generator while performing streaming person detection.
         
-    def _process_frames(self, frames: List[np.ndarray]) -> Tuple[bool, List[np.ndarray]]:
-        """
-        Process frames with efficient single-pass YOLO and conditional overlay.
-
-        Args:
-            frames: Input frames to process
-            
+        Optimizations:
+        - Processes YOLO in mini-batches during capture
+        - Early exit when person detected (skips remaining YOLO)
+        - Caches detection results for processed frames only
+        
         Returns:
-            Tuple of (has_person, processed_frames_with_overlay)
+            Tuple of (has_person, collected_frames, cached_detections, frames_processed)
         """
+        frames = []
+        mini_batch = []
         has_person = False
-        processed_frames = []
         largest_person_bbox = None
-
+        cached_detections = []  # Store YOLO results for reuse
+        frames_processed = 0
+        
         try:
-            # First pass: quick scan for any person detection and find largest bbox
-            for i in range(0, len(frames), self.batch_size):
-                batch = frames[i:i + self.batch_size]
-                batch_results = self.model.predict(batch, conf=self.confidence, verbose=False)
+            for frame in self._record_frames_streaming():
+                frames.append(frame)
+                mini_batch.append(frame)
                 
-                for result in batch_results:
-                    if result.boxes is not None and len(result.boxes) > 0:
-                        classes = result.boxes.cls.cpu().numpy()
-                        boxes = result.boxes.xyxy.cpu().numpy()
-                        
-                        # Find largest person bounding box
-                        for box, cls_id in zip(boxes, classes):
-                            if int(cls_id) == 0:  # Person class
-                                has_person = True
-                                area = (box[2] - box[0]) * (box[3] - box[1])
-                                if largest_person_bbox is None or area > largest_person_bbox[4]:
-                                    largest_person_bbox = np.append(box, area)
+                # Process mini-batch when full
+                if len(mini_batch) >= self.batch_size:
+                    person_detected, bbox, batch_detections = self._detect_person_in_batch(mini_batch)
                     
-                    del result
-
-                del batch_results
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-
-                if has_person:
-                    break
+                    # Cache detection results for overlay phase
+                    cached_detections.extend(batch_detections)
+                    frames_processed += len(mini_batch)
+                    
+                    if person_detected:
+                        has_person = True
+                        if bbox is not None:
+                            area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+                            if largest_person_bbox is None or area > largest_person_bbox[4]:
+                                largest_person_bbox = np.append(bbox, area)
+                    
+                    # Cleanup mini-batch
+                    del mini_batch
+                    mini_batch = []
+                    
+                    # Early exit optimization: stop YOLO after person found
+                    if has_person:
+                        self.logger.debug(f"Person detected, early exit after {frames_processed} frames")
+                        # Collect remaining frames WITHOUT running YOLO
+                        for remaining_frame in self._record_frames_streaming():
+                            frames.append(remaining_frame)
+                        break
+            
+            # Process any remaining frames in mini-batch
+            if mini_batch:
+                person_detected, bbox, batch_detections = self._detect_person_in_batch(mini_batch)
+                cached_detections.extend(batch_detections)
+                frames_processed += len(mini_batch)
+                
+                if person_detected:
+                    has_person = True
+                    if bbox is not None:
+                        area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+                        if largest_person_bbox is None or area > largest_person_bbox[4]:
+                            largest_person_bbox = np.append(bbox, area)
+                del mini_batch
             
             # Apply anti-spam detection
             if has_person and largest_person_bbox is not None:
@@ -692,49 +720,174 @@ class SecuritySystem:
                     has_person = False
                 else:
                     self._update_person_tracking(person_bbox)
+                del largest_person_bbox
             
-            # Second pass: apply consistent overlay type
-            for i in range(0, len(frames), self.batch_size):
-                batch = frames[i:i + self.batch_size]
+            self.logger.debug(f"Collected {len(frames)} frames, processed {frames_processed} with YOLO, person={has_person}")
+            return has_person, frames, cached_detections, frames_processed
+            
+        except Exception as e:
+            self.logger.error(f"Frame collection error: {e}")
+            return False, frames, [], 0
+        finally:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    
+    def _detect_person_in_batch(self, batch: List[np.ndarray]) -> Tuple[bool, Optional[np.ndarray], List[Dict]]:
+        """
+        Detect person in a batch of frames, returning largest bounding box and cached detections.
+        
+        Args:
+            batch: List of frames to process
+            
+        Returns:
+            Tuple of (person_detected, largest_bbox, cached_detections)
+            cached_detections: List of dicts with 'boxes' and 'classes' for each frame
+        """
+        if not batch:
+            return False, None, []
+        
+        largest_bbox = None
+        person_found = False
+        cached_detections = []
+        
+        try:
+            results = self.model.predict(batch, conf=self.confidence, verbose=False)
+            
+            for result in results:
+                # Cache detection results for this frame
+                frame_detection = {'boxes': None, 'classes': None}
                 
-                if has_person:
-                    # Person detection overlay for entire video
-                    batch_results = self.model.predict(batch, conf=self.confidence, verbose=False)
+                if result.boxes is not None and len(result.boxes) > 0:
+                    classes = result.boxes.cls.cpu().numpy()
+                    boxes = result.boxes.xyxy.cpu().numpy()
                     
-                    for j, result in enumerate(batch_results):
-                        frame_copy = batch[j].copy()
+                    # Store copies for caching
+                    frame_detection['boxes'] = boxes.copy()
+                    frame_detection['classes'] = classes.copy()
+                    
+                    for box, cls_id in zip(boxes, classes):
+                        if int(cls_id) == 0:  # Person class
+                            person_found = True
+                            area = (box[2] - box[0]) * (box[3] - box[1])
+                            if largest_bbox is None or area > (largest_bbox[2] - largest_bbox[0]) * (largest_bbox[3] - largest_bbox[1]):
+                                largest_bbox = box.copy()
+                    
+                    del classes, boxes
+                
+                cached_detections.append(frame_detection)
+                del result
+            
+            del results
+            
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            return person_found, largest_bbox, cached_detections
+            
+        except Exception as e:
+            self.logger.error(f"Person detection error: {e}")
+            return False, None, []
+    
+    def _apply_frame_overlays(
+        self, 
+        frames: List[np.ndarray], 
+        has_person: bool, 
+        cached_detections: Optional[List[Dict]] = None,
+        frames_processed: int = 0
+    ) -> List[np.ndarray]:
+        """
+        Apply appropriate overlays to frames based on detection result.
+        
+        Args:
+            frames: Raw frames to process
+            has_person: Whether person was detected
+            cached_detections: Pre-computed YOLO results for early frames
+            frames_processed: Number of frames with cached detections
+            
+        Returns:
+            List of frames with overlays applied
+        """
+        processed_frames = []
+        
+        try:
+            if has_person:
+                # Part 1: Use cached detections for frames that were processed
+                if cached_detections and len(cached_detections) > 0:
+                    cached_count = len(cached_detections)
+                    self.logger.debug(f"Using {cached_count} cached detections, processing {len(frames) - cached_count} remaining frames")
+                    
+                    for frame, detection in zip(frames[:cached_count], cached_detections):
+                        frame_copy = frame.copy()
                         
-                        if result.boxes is not None and len(result.boxes) > 0:
-                            boxes = result.boxes.xyxy.cpu().numpy()
-                            classes = result.boxes.cls.cpu().numpy()
+                        if detection['boxes'] is not None and detection['classes'] is not None:
+                            boxes = detection['boxes']
+                            classes = detection['classes']
                             
                             for box, cls_id in zip(boxes, classes):
-                                if int(cls_id) == 0:
+                                if int(cls_id) == 0:  # Person class
                                     x1, y1, x2, y2 = box.astype(int)
                                     cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 0, 255), 3)
                         
                         processed_frames.append(frame_copy)
-                        del result
-                else:
-                    # Motion detection overlay for entire video
-                    for frame in batch:
-                        frame_copy = frame.copy()
-                        fg_mask = self.bg_subtractor.apply(frame_copy.copy())
-                        motion_pixels = cv2.countNonZero(fg_mask)
-                        total_pixels = fg_mask.shape[0] * fg_mask.shape[1]
-                        motion_percent = int((motion_pixels / total_pixels) * 100)
-                        self._add_motion_overlay(frame_copy, fg_mask, motion_percent)
-                        processed_frames.append(frame_copy)
+                    
+                    # Cleanup cached detections
+                    for detection in cached_detections:
+                        if detection['boxes'] is not None:
+                            del detection['boxes']
+                        if detection['classes'] is not None:
+                            del detection['classes']
+                    del cached_detections
+                
+                # Part 2: Process remaining frames (after early exit)
+                remaining_frames = frames[len(processed_frames):]
+                if remaining_frames:
+                    self.logger.debug(f"Processing {len(remaining_frames)} remaining frames with YOLO")
+                    for i in range(0, len(remaining_frames), self.batch_size):
+                        batch = remaining_frames[i:i + self.batch_size]
+                        results = self.model.predict(batch, conf=self.confidence, verbose=False)
                         
+                        for j, result in enumerate(results):
+                            frame_copy = batch[j].copy()
+                            
+                            if result.boxes is not None and len(result.boxes) > 0:
+                                boxes = result.boxes.xyxy.cpu().numpy()
+                                classes = result.boxes.cls.cpu().numpy()
+                                
+                                for box, cls_id in zip(boxes, classes):
+                                    if int(cls_id) == 0:  # Person class
+                                        x1, y1, x2, y2 = box.astype(int)
+                                        cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 0, 255), 3)
+                                
+                                del boxes, classes
+                            
+                            processed_frames.append(frame_copy)
+                            del result
+                        
+                        del results, batch
+                        
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+            else:
+                # Apply motion detection overlay
+                for frame in frames:
+                    frame_copy = frame.copy()
+                    fg_mask = self.bg_subtractor.apply(frame_copy.copy())
+                    motion_pixels = cv2.countNonZero(fg_mask)
+                    total_pixels = fg_mask.shape[0] * fg_mask.shape[1]
+                    motion_percent = int((motion_pixels / total_pixels) * 100)
+                    self._add_motion_overlay(frame_copy, fg_mask, motion_percent)
+                    processed_frames.append(frame_copy)
+                    del fg_mask, frame_copy
+            
+            return processed_frames
+            
         except Exception as e:
-            self.logger.error(f"Frame processing error: {e}")
-            return False, frames
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        return has_person, processed_frames
-
+            self.logger.error(f"Overlay application error: {e}")
+            return frames  # Return raw frames on error
+        finally:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    
     def _generate_gif(
         self, 
         frames: List[np.ndarray], 
