@@ -582,6 +582,39 @@ class SecurityTelegramBot:
         for char in dangerous_chars:
             sanitized = sanitized.replace(char, '')
         return sanitized
+    
+    def _validate_numeric_arg(
+        self, 
+        args: List[str], 
+        arg_name: str, 
+        min_val: Optional[float] = None, 
+        max_val: Optional[float] = None,
+        as_int: bool = False
+    ) -> tuple[Optional[Union[int, float]], Optional[str]]:
+        """
+        Validate numeric argument with clear error message.
+        
+        Args:
+            args: Command arguments list
+            arg_name: Name of argument for error messages
+            min_val: Minimum allowed value (inclusive)
+            max_val: Maximum allowed value (inclusive)
+            as_int: Return as integer instead of float
+            
+        Returns:
+            Tuple of (value, error_message). If valid, error_message is None.
+        """
+        if not args:
+            return None, f"❌ Missing {arg_name}"
+        try:
+            val = int(args[0]) if as_int else float(args[0])
+            if min_val is not None and val < min_val:
+                return None, f"❌ {arg_name} must be >= {min_val}"
+            if max_val is not None and val > max_val:
+                return None, f"❌ {arg_name} must be <= {max_val}"
+            return val, None
+        except (ValueError, IndexError):
+            return None, f"❌ Invalid {arg_name} (must be a {'number' if not as_int else 'whole number'})"
 
     def _is_rate_limited_user(self, user_id: int) -> bool:
         """Check if user is rate limited due to failed attempts."""
@@ -976,7 +1009,12 @@ class SecurityTelegramBot:
             return
         
         recordings = self.event_manager.list_recordings()
-        key = context.args[0]
+        # Sanitize input to prevent path traversal attacks
+        key = self._sanitize_input(context.args[0], max_length=200)
+        
+        if not key:
+            await update.message.reply_text("❌ Invalid input.")
+            return
         
         try:
             # Try as index first
@@ -984,10 +1022,10 @@ class SecurityTelegramBot:
             if 0 <= idx < len(recordings):
                 file_path = recordings[idx]
             else:
-                await update.message.reply_text("❌ Invalid index.")
+                await update.message.reply_text(f"❌ Invalid index. Must be 0-{len(recordings)-1}.")
                 return
         except ValueError:
-            # Try as event name
+            # Try as event name (already sanitized)
             file_path = self.event_manager.get_recording(key)
             if not file_path:
                 await update.message.reply_text("❌ Recording not found.")
@@ -1138,7 +1176,9 @@ class SecurityTelegramBot:
             await update.message.reply_text(help_text, parse_mode='HTML')
             return
         
-        key, value = context.args[0].lower(), context.args[1].lower()
+        # Sanitize inputs
+        key = self._sanitize_input(context.args[0].lower(), max_length=50)
+        value = self._sanitize_input(context.args[1].lower(), max_length=100)
         
         if not key or not value:
             await update.message.reply_text("❌ Key and value cannot be empty")
@@ -1148,21 +1188,36 @@ class SecurityTelegramBot:
         
         try:
             if key == "interval":
-                security_system.interval = max(0.1, float(value))
-                msg = f"✅ Check interval set to {security_system.interval}s"
+                val_num = float(value)
+                if val_num < 0.1:
+                    msg = "❌ Interval must be >= 0.1 seconds"
+                else:
+                    security_system.interval = val_num
+                    msg = f"✅ Check interval set to {security_system.interval}s"
                 
             elif key == "frames":
-                security_system.record_frames = max(5, int(value))
-                msg = f"✅ Record frames set to {security_system.record_frames}"
+                val_num = int(value)
+                if val_num < 5:
+                    msg = "❌ Frames must be >= 5"
+                else:
+                    security_system.record_frames = val_num
+                    msg = f"✅ Record frames set to {security_system.record_frames}"
                 
             elif key == "confidence":
-                confidence = max(0.1, min(0.9, float(value)))
-                security_system.confidence = confidence
-                msg = f"✅ Detection confidence set to {confidence}"
+                val_num = float(value)
+                if not (0.1 <= val_num <= 0.9):
+                    msg = "❌ Confidence must be between 0.1 and 0.9"
+                else:
+                    security_system.confidence = val_num
+                    msg = f"✅ Detection confidence set to {val_num}"
                 
             elif key == "threshold":
-                security_system.motion_threshold = max(1000, int(value))
-                msg = f"✅ Motion threshold set to {security_system.motion_threshold}"
+                val_num = int(value)
+                if val_num < 1000:
+                    msg = "❌ Threshold must be >= 1000"
+                else:
+                    security_system.motion_threshold = val_num
+                    msg = f"✅ Motion threshold set to {security_system.motion_threshold}"
                 
             elif key == "gif_motion":
                 self.config.gif_for_motion = value in ['on', 'true', '1', 'yes']
@@ -1175,18 +1230,26 @@ class SecurityTelegramBot:
                 msg = f"✅ GIF for person {status}"
                 
             elif key == "gif_fps":
-                self.config.gif_fps = max(5, min(30, int(value)))
-                msg = f"✅ GIF FPS set to {self.config.gif_fps}"
+                val_num = int(value)
+                if not (5 <= val_num <= 30):
+                    msg = "❌ GIF FPS must be between 5 and 30"
+                else:
+                    self.config.gif_fps = val_num
+                    msg = f"✅ GIF FPS set to {self.config.gif_fps}"
                 
             elif key == "max_file_size":
-                self.config.max_file_size_mb = max(1, min(100, float(value)))
-                msg = f"✅ Max file size set to {self.config.max_file_size_mb}MB"
+                val_num = float(value)
+                if not (1 <= val_num <= 100):
+                    msg = "❌ Max file size must be between 1 and 100 MB"
+                else:
+                    self.config.max_file_size_mb = val_num
+                    msg = f"✅ Max file size set to {self.config.max_file_size_mb}MB"
                 
             else:
                 msg = "❌ Invalid configuration key"
                 
-        except ValueError as e:
-            msg = f"❌ Invalid value: {e}"
+        except ValueError:
+            msg = "❌ Invalid value format (check if it should be a number)"
         except Exception as e:
             self.logger.error(f"Configuration error: {e}")
             msg = f"❌ Configuration error: {str(e)[:50]}"
@@ -1222,13 +1285,17 @@ class SecurityTelegramBot:
         """Generate and send timeline plot."""
         self._update_chat_id(update)
         
-        # Parse hours argument
+        # Validate hours argument with helper
         hours = 24  # default
         if context.args:
-            try:
-                hours = max(1, min(168, int(context.args[0])))  # 1 hour to 1 week
-            except ValueError:
-                await update.message.reply_text("❌ Invalid hours value. Using default (24).")
+            validated_hours, error = self._validate_numeric_arg(
+                context.args, "hours", min_val=1, max_val=168, as_int=True
+            )
+            if error:
+                await update.message.reply_text(f"{error}\n💡 Using default (24 hours)")
+                hours = 24
+            else:
+                hours = validated_hours
         
         try:
             await update.message.reply_text(f"📊 Generating timeline for last {hours} hours...")
@@ -1254,13 +1321,17 @@ class SecurityTelegramBot:
         """Show analytics summary."""
         self._update_chat_id(update)
         
-        # Parse hours argument
+        # Validate hours argument with helper
         hours = 24  # default
         if context.args:
-            try:
-                hours = max(1, min(168, int(context.args[0])))
-            except ValueError:
-                await update.message.reply_text("❌ Invalid hours value. Using default (24).")
+            validated_hours, error = self._validate_numeric_arg(
+                context.args, "hours", min_val=1, max_val=168, as_int=True
+            )
+            if error:
+                await update.message.reply_text(f"{error}\n💡 Using default (24 hours)")
+                hours = 24
+            else:
+                hours = validated_hours
         
         try:
             stats = self.event_manager.get_analytics_summary(hours=hours)
@@ -1309,35 +1380,54 @@ class SecurityTelegramBot:
 
         if query.data.startswith("get_"):
             try:
-                # Extract recording index
-                idx = int(query.data.split("_")[1])
+                # Extract and validate recording index
+                idx_str = query.data.split("_")[1]
+                idx = int(idx_str)
+                
+                # Validate index range
+                if idx < 0:
+                    await query.message.reply_text("❌ Invalid recording index")
+                    return
+                
                 recordings = self.event_manager.list_recordings()
                 
-                if 0 <= idx < len(recordings):
-                    file_path = recordings[idx]
+                if idx >= len(recordings):
+                    await query.message.reply_text(f"❌ Recording not found (index: {idx})")
+                    return
+                
+                file_path = recordings[idx]
+                
+                # Show loading message
+                loading_msg = await query.message.reply_text("⏳ Loading recording...")
+                
+                try:
+                    # Validate file exists and is readable
+                    if not Path(file_path).exists():
+                        await loading_msg.edit_text("❌ Recording file no longer exists")
+                        return
                     
-                    # Show loading message
-                    loading_msg = await query.message.reply_text("⏳ Loading recording...")
+                    # Send the recording
+                    with open(file_path, "rb") as f:
+                        await query.message.reply_animation(
+                            animation=f,
+                            caption=f"📹 {Path(file_path).stem}",
+                            read_timeout=30,
+                            write_timeout=60
+                        )
+                    await loading_msg.delete()
                     
-                    try:
-                        # Send the recording
-                        with open(file_path, "rb") as f:
-                            await query.message.reply_animation(
-                                animation=f,
-                                caption=f"📹 {Path(file_path).stem}",
-                                read_timeout=30,
-                                write_timeout=60
-                            )
-                        await loading_msg.delete()
-                        
-                    except Exception as e:
-                        await loading_msg.edit_text("❌ Failed to load recording")
-                        self.logger.error(f"Error sending recording via callback: {e}")
-                else:
-                    await query.message.reply_text("❌ Recording not found")
+                except (OSError, IOError) as e:
+                    await loading_msg.edit_text("❌ Failed to read recording file")
+                    self.logger.error(f"File I/O error in callback: {e}")
+                except Exception as e:
+                    await loading_msg.edit_text("❌ Failed to send recording")
+                    self.logger.error(f"Error sending recording via callback: {e}")
                     
+            except (ValueError, IndexError) as e:
+                self.logger.warning(f"Invalid callback data: {query.data}")
+                await query.message.reply_text("❌ Invalid request format")
             except Exception as e:
-                self.logger.error(f"Callback query error: {e}")
+                self.logger.error(f"Callback query error: {e}", exc_info=True)
                 await query.message.reply_text("❌ Error processing request")
     
     async def start_bot(self) -> None:
