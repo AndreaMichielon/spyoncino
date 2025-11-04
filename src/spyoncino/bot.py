@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Callable, Union
 from dataclasses import dataclass, field, asdict
 from functools import wraps
+from contextlib import contextmanager
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -54,6 +55,33 @@ class NotificationEvent:
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now()
+
+@contextmanager
+def _temp_file(path: Path, logger=None):
+    """
+    Context manager for temporary files that ensures cleanup.
+    
+    Args:
+        path: Path to the temporary file
+        logger: Optional logger for logging cleanup events
+        
+    Yields:
+        Path: The path to the temporary file
+        
+    Ensures:
+        File is deleted after use, even if exceptions occur
+    """
+    try:
+        yield path
+    finally:
+        if path.exists():
+            try:
+                path.unlink()
+                if logger:
+                    logger.debug(f"Temporary file cleaned up: {path}")
+            except OSError as e:
+                if logger:
+                    logger.warning(f"Failed to cleanup temporary file {path}: {e}")
 
 def _require_authorization(func):
     """Decorator for command handlers requiring authorization."""
@@ -994,7 +1022,6 @@ class SecurityTelegramBot:
         """Take and send a live snapshot."""
         self._update_chat_id(update)
         
-        snap_path = None
         try:
             # Check if system is connected
             security_system = self.event_manager.security_system
@@ -1023,25 +1050,29 @@ class SecurityTelegramBot:
                 new_size = (int(width * scale), int(height * scale))
                 frame = cv2.resize(frame, new_size)
             
-            # Save temporary snapshot
-            snap_path = Path("temp_snapshot.jpg")
-            success = cv2.imwrite(str(snap_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            # Use context manager for temporary file - ensures cleanup
+            with _temp_file(Path("temp_snapshot.jpg"), self.logger) as snap_path:
+                # Save temporary snapshot
+                success = cv2.imwrite(str(snap_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                
+                if not success or not snap_path.exists():
+                    await update.message.reply_text("❌ Failed to save snapshot.")
+                    return
+                
+                # Read file into memory before deletion
+                with open(snap_path, "rb") as f:
+                    photo_data = io.BytesIO(f.read())
+                    photo_data.name = "snapshot.jpg"  # Set name for proper MIME type
             
-            if not success or not snap_path.exists():
-                await update.message.reply_text("❌ Failed to save snapshot.")
-                return
-            
+            # Send snapshot (file is now in memory, safe to delete temp file)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            # Send snapshot
-            with open(snap_path, "rb") as f:
-                await update.message.reply_photo(
-                    photo=f,
-                    caption=f"📸 <b>Live Snapshot</b>\n📅 {timestamp}",
-                    parse_mode='HTML',
-                    read_timeout=30,
-                    write_timeout=30
-                )
+            await update.message.reply_photo(
+                photo=photo_data,
+                caption=f"📸 <b>Live Snapshot</b>\n📅 {timestamp}",
+                parse_mode='HTML',
+                read_timeout=30,
+                write_timeout=30
+            )
             
             self.logger.info("Snapshot sent successfully")
             
@@ -1057,14 +1088,6 @@ class SecurityTelegramBot:
         except Exception as e:
             self.logger.error(f"Unexpected snapshot error: {e}", exc_info=True)
             await update.message.reply_text("❌ Snapshot failed due to unexpected error.")
-        finally:
-            # Cleanup temporary file
-            if snap_path and snap_path.exists():
-                try:
-                    snap_path.unlink()
-                    self.logger.debug("Snapshot temporary file cleaned up")
-                except OSError as e:
-                    self.logger.warning(f"Failed to cleanup snapshot: {e}")
                     
     @_require_authorization
     async def cmd_show_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
