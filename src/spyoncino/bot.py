@@ -42,7 +42,11 @@ class BotConfig:
     # Multi-user settings
     notification_chat_id: Optional[int] = None  # Dedicated chat for alerts
     allow_group_commands: bool = True           # Allow commands in groups
-    silent_unauthorized: bool = True            # Silent rejection in groups
+    silent_unauthorized: bool = True
+    
+    # Advanced settings
+    read_timeout: int = 30                     # Telegram read timeout (seconds)
+    write_timeout: int = 60                    # Telegram write timeout (seconds)            # Silent rejection in groups
 
 @dataclass
 class NotificationEvent:
@@ -404,8 +408,8 @@ class SecurityTelegramBot:
                     animation=f,
                     caption=caption,
                     parse_mode='HTML',
-                    read_timeout=30,
-                    write_timeout=60
+                    read_timeout=self.config.read_timeout,
+                    write_timeout=self.config.write_timeout
                 )
                 
             self.logger.info(f"Media notification sent: {event.message}")
@@ -1041,8 +1045,8 @@ class SecurityTelegramBot:
                 await update.message.reply_animation(
                     animation=f,
                     caption=f"📹 Recording: {Path(file_path).stem}",
-                    read_timeout=30,
-                    write_timeout=60
+                    read_timeout=self.config.read_timeout,
+                    write_timeout=self.config.write_timeout
                 )
 
         except (OSError, IOError) as e:
@@ -1108,8 +1112,8 @@ class SecurityTelegramBot:
                 photo=photo_data,
                 caption=f"📸 <b>Live Snapshot</b>\n📅 {timestamp}",
                 parse_mode='HTML',
-                read_timeout=30,
-                write_timeout=30
+                read_timeout=self.config.read_timeout,
+                write_timeout=self.config.read_timeout  # Use read_timeout for snapshots (smaller files)
             )
             
             self.logger.info("Snapshot sent successfully")
@@ -1411,8 +1415,8 @@ class SecurityTelegramBot:
                         await query.message.reply_animation(
                             animation=f,
                             caption=f"📹 {Path(file_path).stem}",
-                            read_timeout=30,
-                            write_timeout=60
+                            read_timeout=self.config.read_timeout,
+                            write_timeout=self.config.write_timeout
                         )
                     await loading_msg.delete()
                     

@@ -92,3 +92,35 @@ system:
   log_max_size_mb: 10             # Maximum log file size before rotation (MB)
   log_backup_count: 3             # Number of backup log files to keep
 
+# =============================================================================
+# ADVANCED SETTINGS
+# =============================================================================
+# Internal parameters - only change if you know what you're doing
+advanced:
+  # AI/GPU optimization
+  yolo_warmup_size: 224           # Dummy frame size for YOLO warmup (pixels)
+  gpu_memory_reserve: 0.2         # Fraction of GPU memory to keep free (0.0-1.0)
+  
+  # GIF processing
+  gif_max_dimension: 640          # Maximum width/height for GIF frames (pixels)
+  gif_worker_threads: 2           # Number of parallel GIF generation threads
+  
+  # Background subtraction
+  bg_detect_shadows: true         # Enable shadow detection in motion detection
+  
+  # Telegram timeouts
+  telegram_read_timeout: 30       # Read timeout for Telegram operations (seconds)
+  telegram_write_timeout: 60      # Write timeout for Telegram file uploads (seconds)
+  
+  # Analytics
+  analytics_figure_width: 22      # Analytics chart width (inches)
+  analytics_figure_height: 5.5    # Analytics chart height (inches)
+  analytics_intervals:            # Time binning for analytics (minutes)
+    - 5     # For 0-6 hours
+    - 15    # For 6-24 hours  
+    - 60    # For 24-72 hours
+    - 120   # For 72+ hours
+  
+  # UI overlay scaling
+  ui_scale_base: 320              # Base resolution for UI scaling calculations
+

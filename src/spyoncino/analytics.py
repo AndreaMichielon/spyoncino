@@ -68,15 +68,29 @@ class EventLogger:
     Stores events in SQLite database using SQLAlchemy ORM.
     """
     
-    def __init__(self, db_path: str = "security_events.db"):
+    def __init__(
+        self, 
+        db_path: str = "security_events.db",
+        analytics_figure_width: float = 22,
+        analytics_figure_height: float = 5.5,
+        analytics_intervals: List[int] = None
+    ):
         """
         Initialize the event logger with SQLAlchemy and connection pooling.
         
         Args:
             db_path: Path to SQLite database file
+            analytics_figure_width: Width of analytics charts in inches
+            analytics_figure_height: Height of analytics charts in inches  
+            analytics_intervals: Time intervals for binning (minutes) for different time ranges
         """
         self.db_path = Path(db_path)
         self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # Analytics configuration
+        self.analytics_figure_width = analytics_figure_width
+        self.analytics_figure_height = analytics_figure_height
+        self.analytics_intervals = analytics_intervals or [5, 15, 60, 120]
         
         # Create SQLAlchemy engine with optimized connection pooling
         db_url = f"sqlite:///{self.db_path}"
@@ -227,14 +241,15 @@ class EventLogger:
         end_time = datetime.now()
         start_time = end_time - timedelta(hours=hours)
         
+        # Use configured intervals based on time range
         if hours <= 6:
-            interval_minutes = 5
+            interval_minutes = self.analytics_intervals[0]
         elif hours <= 24:
-            interval_minutes = 15
+            interval_minutes = self.analytics_intervals[1]
         elif hours <= 72:
-            interval_minutes = 60
+            interval_minutes = self.analytics_intervals[2]
         else:
-            interval_minutes = 120
+            interval_minutes = self.analytics_intervals[3]
         
         time_points = []
         current = start_time
@@ -335,8 +350,8 @@ class EventLogger:
         combined_counts = [m + p for m, p in zip(motion_counts, person_counts)]
         max_count = max(combined_counts, default=0) if combined_counts else 1
         
-        # Create single unified plot - compact height
-        fig, ax = plt.subplots(figsize=(22, 5.5))
+        # Create single unified plot with configured dimensions
+        fig, ax = plt.subplots(figsize=(self.analytics_figure_width, self.analytics_figure_height))
         fig.subplots_adjust(left=0.05, right=0.98, top=0.92, bottom=0.18)
         
         # Define colors

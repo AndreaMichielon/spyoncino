@@ -33,7 +33,10 @@ class SecurityEventManager:
         check_interval: float = 5.0,
         retention_hours: int = 24,
         low_space_threshold_gb: float = 1.0,
-        aggressive_cleanup_hours: int = 12
+        aggressive_cleanup_hours: int = 12,
+        analytics_figure_width: float = 22,
+        analytics_figure_height: float = 5.5,
+        analytics_intervals: List[int] = None
     ):
         """
         Initialize the security event manager.
@@ -84,7 +87,13 @@ class SecurityEventManager:
             'start_time': None
         }
         
-        self.event_logger = EventLogger(self.event_folder / "events.db")
+        # Initialize event logger with analytics configuration
+        self.event_logger = EventLogger(
+            db_path=self.event_folder / "events.db",
+            analytics_figure_width=analytics_figure_width,
+            analytics_figure_height=analytics_figure_height,
+            analytics_intervals=analytics_intervals
+        )
         
         # Event handlers (can be overridden by external systems)
         self.on_disconnect: Callable[[], None] = self._default_disconnect_handler

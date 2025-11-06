@@ -47,7 +47,14 @@ class SecuritySystem:
         max_gif_frames: int = 20,
         person_cooldown_seconds: float = 15.0,
         bbox_overlap_threshold: float = 0.6,
-        person_timeout_seconds: float = 5.0
+        person_timeout_seconds: float = 5.0,
+        # Advanced settings
+        yolo_warmup_size: int = 224,
+        gpu_memory_reserve: float = 0.2,
+        gif_max_dimension: int = 640,
+        gif_worker_threads: int = 2,
+        bg_detect_shadows: bool = True,
+        ui_scale_base: int = 320
     ):
         """
         Initialize the security system.
@@ -93,6 +100,14 @@ class SecuritySystem:
         self.max_gif_frames = max_gif_frames
         self.event_folder = event_folder
 
+        # Advanced configuration
+        self.yolo_warmup_size = yolo_warmup_size
+        self.gpu_memory_reserve = gpu_memory_reserve
+        self.gif_max_dimension = gif_max_dimension
+        self.gif_worker_threads = gif_worker_threads
+        self.bg_detect_shadows = bg_detect_shadows
+        self.ui_scale_base = ui_scale_base
+
         # Logging
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.debug(f"Security system initialized with max_batch_size={self.max_batch_size}")
@@ -103,7 +118,7 @@ class SecuritySystem:
         self._stop_event = threading.Event()
         
         # Computer vision components
-        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(detectShadows=True)
+        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(detectShadows=self.bg_detect_shadows)
         self._initialize_yolo()
         
         # Anti-spam detection parameters
@@ -116,7 +131,7 @@ class SecuritySystem:
 
         # Background processing
         self.gif_executor = ThreadPoolExecutor(
-            max_workers=2, 
+            max_workers=self.gif_worker_threads, 
             thread_name_prefix="SecurityGifProcessor"
         )
         self._pending_gifs: List[Future] = []
@@ -171,7 +186,7 @@ class SecuritySystem:
             self.model = YOLO(str(model_path))
             
             # Warmup with dummy data
-            dummy_frame = np.zeros((224, 224, 3), dtype=np.uint8)
+            dummy_frame = np.zeros((self.yolo_warmup_size, self.yolo_warmup_size, 3), dtype=np.uint8)
             self.model.predict(source=dummy_frame, verbose=False)
             
             # Optimize batch size for available VRAM
@@ -185,8 +200,8 @@ class SecuritySystem:
     
     def _optimize_batch_size(
         self, 
-        frame_shape: Tuple[int, int, int] = (224, 224, 3), 
-        memory_reserve: float = 0.2
+        frame_shape: Tuple[int, int, int] = None, 
+        memory_reserve: float = None
     ) -> int:
         """
         Optimize batch size based on available GPU memory.
@@ -198,6 +213,12 @@ class SecuritySystem:
         Returns:
             Optimal batch size for current hardware
         """
+        # Use config defaults if not provided
+        if frame_shape is None:
+            frame_shape = (self.yolo_warmup_size, self.yolo_warmup_size, 3)
+        if memory_reserve is None:
+            memory_reserve = self.gpu_memory_reserve
+            
         if not torch.cuda.is_available():
             return 1
             
@@ -421,7 +442,7 @@ class SecuritySystem:
             
             # Scale all dimensions based on frame size
             h, w = frame.shape[:2]
-            scale_factor = min(h, w) / 320  # Base scale on 480p as reference
+            scale_factor = min(h, w) / self.ui_scale_base  # Base scale on configured resolution
             
             # Enhanced scaling with minimum guarantees
             font_scale = max(0.6, min(2.5, 0.7 * scale_factor))
@@ -986,9 +1007,9 @@ class SecuritySystem:
         return [frames[i] for i in selected_indices]
 
     def _resize_for_gif(self, frame: np.ndarray) -> np.ndarray:
-        """Resize frame with max side 640px, preserving aspect ratio and even dimensions."""
+        """Resize frame with max side from config, preserving aspect ratio and even dimensions."""
         height, width = frame.shape[:2]
-        max_dimension = 640
+        max_dimension = self.gif_max_dimension
         
         # Skip if already within bounds
         if max(height, width) <= max_dimension:

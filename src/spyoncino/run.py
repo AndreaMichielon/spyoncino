@@ -166,6 +166,19 @@ class SecuritySystemRunner:
             flattened["LOG_MAX_SIZE_MB"] = config["system"].get("log_max_size_mb", 10)
             flattened["LOG_BACKUP_COUNT"] = config["system"].get("log_backup_count", 3)
         
+        if "advanced" in config:
+            flattened["YOLO_WARMUP_SIZE"] = config["advanced"].get("yolo_warmup_size", 224)
+            flattened["GPU_MEMORY_RESERVE"] = config["advanced"].get("gpu_memory_reserve", 0.2)
+            flattened["GIF_MAX_DIMENSION"] = config["advanced"].get("gif_max_dimension", 640)
+            flattened["GIF_WORKER_THREADS"] = config["advanced"].get("gif_worker_threads", 2)
+            flattened["BG_DETECT_SHADOWS"] = config["advanced"].get("bg_detect_shadows", True)
+            flattened["TELEGRAM_READ_TIMEOUT"] = config["advanced"].get("telegram_read_timeout", 30)
+            flattened["TELEGRAM_WRITE_TIMEOUT"] = config["advanced"].get("telegram_write_timeout", 60)
+            flattened["ANALYTICS_FIGURE_WIDTH"] = config["advanced"].get("analytics_figure_width", 22)
+            flattened["ANALYTICS_FIGURE_HEIGHT"] = config["advanced"].get("analytics_figure_height", 5.5)
+            flattened["ANALYTICS_INTERVALS"] = config["advanced"].get("analytics_intervals", [5, 15, 60, 120])
+            flattened["UI_SCALE_BASE"] = config["advanced"].get("ui_scale_base", 320)
+        
         if "security" in config:
             flattened["NOTIFICATION_CHAT_ID"] = config["security"].get("notification_chat_id")
             flattened["ALLOW_GROUP_COMMANDS"] = config["security"].get("allow_group_commands", True)
@@ -290,6 +303,13 @@ class SecuritySystemRunner:
                     max_gif_frames=self.config.get("MAX_GIF_FRAMES", 20),
                     person_cooldown_seconds=self.config.get("PERSON_COOLDOWN_SECONDS", 15.0),
                     bbox_overlap_threshold=self.config.get("BBOX_OVERLAP_THRESHOLD", 0.6),
+                    # Advanced settings
+                    yolo_warmup_size=self.config.get("YOLO_WARMUP_SIZE", 224),
+                    gpu_memory_reserve=self.config.get("GPU_MEMORY_RESERVE", 0.2),
+                    gif_max_dimension=self.config.get("GIF_MAX_DIMENSION", 640),
+                    gif_worker_threads=self.config.get("GIF_WORKER_THREADS", 2),
+                    bg_detect_shadows=self.config.get("BG_DETECT_SHADOWS", True),
+                    ui_scale_base=self.config.get("UI_SCALE_BASE", 320),
                 )
             
             except Exception as e:
@@ -303,7 +323,10 @@ class SecuritySystemRunner:
                     check_interval=self.config.get("CHECK_INTERVAL", 5.0),
                     retention_hours=self.config.get("RETENTION_HOURS", 24),
                     low_space_threshold_gb=self.config.get("LOW_SPACE_THRESHOLD_GB", 1.0),
-                    aggressive_cleanup_hours=self.config.get("AGGRESSIVE_CLEANUP_HOURS", 12)
+                    aggressive_cleanup_hours=self.config.get("AGGRESSIVE_CLEANUP_HOURS", 12),
+                    analytics_figure_width=self.config.get("ANALYTICS_FIGURE_WIDTH", 22),
+                    analytics_figure_height=self.config.get("ANALYTICS_FIGURE_HEIGHT", 5.5),
+                    analytics_intervals=self.config.get("ANALYTICS_INTERVALS", [5, 15, 60, 120])
                 )
 
             except Exception as e:
@@ -323,7 +346,9 @@ class SecuritySystemRunner:
                     setup_password=self.config.get("SETUP_PASSWORD"),
                     notification_chat_id=self.config.get("NOTIFICATION_CHAT_ID"),
                     allow_group_commands=self.config.get("ALLOW_GROUP_COMMANDS", True),
-                    silent_unauthorized=self.config.get("SILENT_UNAUTHORIZED", True)
+                    silent_unauthorized=self.config.get("SILENT_UNAUTHORIZED", True),
+                    read_timeout=self.config.get("TELEGRAM_READ_TIMEOUT", 30),
+                    write_timeout=self.config.get("TELEGRAM_WRITE_TIMEOUT", 60),
                 )
 
                 self.bot = SecurityTelegramBot(
@@ -445,6 +470,16 @@ class SecuritySystemRunner:
         print("\n⚙️  SYSTEM:")
         print(f"  • Log Level: {self.config.get('LOG_LEVEL')}")
         print(f"  • Check Interval: {self.config.get('CHECK_INTERVAL')}s")
+        
+        # Advanced settings (optional, can be hidden)
+        if self.config.get('LOG_LEVEL') == 'DEBUG':  # Only show in debug mode
+            print("\n🔧 ADVANCED:")
+            print(f"  • YOLO Warmup Size: {self.config.get('YOLO_WARMUP_SIZE')}px")
+            print(f"  • GPU Memory Reserve: {self.config.get('GPU_MEMORY_RESERVE')*100:.0f}%")
+            print(f"  • GIF Max Dimension: {self.config.get('GIF_MAX_DIMENSION')}px")
+            print(f"  • GIF Workers: {self.config.get('GIF_WORKER_THREADS')}")
+            print(f"  • Background Shadows: {self.config.get('BG_DETECT_SHADOWS')}")
+            print(f"  • Telegram Timeouts: {self.config.get('TELEGRAM_READ_TIMEOUT')}s/{self.config.get('TELEGRAM_WRITE_TIMEOUT')}s")
         
         print("\n" + "="*60 + "\n")
     
