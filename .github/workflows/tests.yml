@@ -9,19 +9,28 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
-    
+
     - name: Install dependencies
       run: |
-        pip install pytest
-    
+        pip install -e ".[dev]"
+
+    - name: Run linting (Ruff)
+      run: |
+        ruff check .
+
+    - name: Run type checking (mypy)
+      run: |
+        mypy src/
+      continue-on-error: true  # Don't fail build on type errors initially
+
     - name: Run tests
       run: |
-        pytest tests/ -v
+        pytest tests/ -v --cov=spyoncino --cov-report=term-missing

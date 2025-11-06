@@ -172,4 +172,3 @@ else
     echo "System stopped successfully"
 fi
 echo "========================================"
-

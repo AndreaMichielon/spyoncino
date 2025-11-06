@@ -1,0 +1,90 @@
+# Pre-commit hooks configuration for spyoncino
+# See https://pre-commit.com for more information
+
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+
+repos:
+  # Ruff - Fast Python linter and formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      # Run the linter
+      - id: ruff
+        args: [--fix]
+        types_or: [python, pyi]
+      # Run the formatter
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  # mypy - Static type checker (disabled for now - too many warnings on existing code)
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.13.0
+  #   hooks:
+  #     - id: mypy
+  #       additional_dependencies:
+  #         - types-PyYAML
+  #       args: [--ignore-missing-imports, --show-error-codes]
+  #       exclude: ^tests/
+
+  # General pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # Check for files that would conflict in case-insensitive filesystems
+      - id: check-case-conflict
+      # Ensure files end with a newline
+      - id: end-of-file-fixer
+        exclude: ^(.*\.lock|.*\.gif)$
+      # Trim trailing whitespace
+      - id: trailing-whitespace
+        exclude: ^(.*\.lock|.*\.md)$
+        args: [--markdown-linebreak-ext=md]
+      # Check YAML files
+      - id: check-yaml
+        args: [--unsafe]  # Allow custom tags in YAML
+        exclude: ^config/secrets\.yaml$
+      # Check TOML files
+      - id: check-toml
+      # Check JSON files
+      - id: check-json
+      # Check for added large files
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+        exclude: ^(uv\.lock|.*\.(pt|pth|onnx|h5))$
+      # Check for merge conflict markers
+      - id: check-merge-conflict
+      # Check for debug statements
+      - id: debug-statements
+      # Check docstring is first
+      - id: check-docstring-first
+      # Detect private key
+      - id: detect-private-key
+      # Mixed line ending
+      - id: mixed-line-ending
+        args: [--fix=auto]
+
+  # Security checks
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.10
+    hooks:
+      - id: bandit
+        args: [-c, pyproject.toml]
+        additional_dependencies: ["bandit[toml]"]
+        exclude: ^tests/
+
+  # Spell checking (optional but helpful for documentation)
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.3.0
+    hooks:
+      - id: codespell
+        args: [--ignore-words-list=crate,nd,sav,wil]
+        exclude: ^(.*\.lock|.*\.gif|.*\.pt|.*\.pth)$
+
+# Configuration for commit messages (optional)
+# Uncomment to enforce conventional commits
+# - repo: https://github.com/compilerla/conventional-pre-commit
+#   rev: v3.4.0
+#   hooks:
+#     - id: conventional-pre-commit
+#       stages: [commit-msg]

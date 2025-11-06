@@ -334,7 +334,35 @@ ls /dev/video*  # Linux - list cameras
 
 ## Contributing
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute to this project.
+Contributions are welcome! We have a comprehensive development setup with code quality tools.
+
+### For Contributors
+
+1. **Setup Development Environment:**
+   ```bash
+   # Windows
+   dev\setup_dev.bat
+   
+   # Linux/Mac
+   ./dev/setup_dev.sh
+   
+   # Or using Make
+   make dev-install
+   ```
+
+2. **Setup Guide:** See [dev/SETUP.md](dev/SETUP.md)
+3. **Development Reference:** See [dev/DEVELOPMENT.md](dev/DEVELOPMENT.md)
+4. **Contributing Guidelines:** See [CONTRIBUTING.md](CONTRIBUTING.md)
+
+### Code Quality Tools
+
+- **Ruff** - Lightning-fast linter and formatter
+- **mypy** - Static type checker
+- **pytest** - Testing framework with coverage
+- **pre-commit** - Automated code quality checks
+- **bandit** - Security vulnerability scanner
+
+Pre-commit hooks run automatically on every commit to ensure code quality.
 
 ## License
 

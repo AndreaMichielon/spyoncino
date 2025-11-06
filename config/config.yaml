@@ -2,7 +2,7 @@
 # SPYONCINO CONFIGURATION
 # =============================================================================
 # AI-powered security system with motion detection and person recognition
-# 
+#
 # This file contains general system settings, camera configuration,
 # detection parameters, and storage options.
 #
@@ -17,12 +17,12 @@
 camera:
   # Source identification
   usb_port: 0                    # Camera device index (0, 1, 2...) or video file path
-  
+
   # Video resolution
   width: 1280                     # Camera width in pixels (e.g., 640, 1280, 1920)
   height: 720                     # Camera height in pixels (e.g., 480, 720, 1080)
   fps: 15                         # Frames per second for capture
-  
+
   # Optional adjustments (null = use camera defaults)
   brightness: null                # Brightness level (camera-dependent range)
   contrast: null                  # Contrast level (camera-dependent range)
@@ -35,14 +35,14 @@ detection:
   # Timing
   interval: 2.0                   # Seconds between detection checks (lower = more frequent)
   record_frames: 50               # Number of frames to capture per detection event
-  
+
   # AI/YOLO settings
   confidence: 0.25                # AI confidence threshold (0.1-0.9, lower = more sensitive)
   max_batch_size: 32              # Maximum frames processed per YOLO batch (GPU memory)
-  
+
   # Motion detection
   motion_threshold: 5             # Pixel change threshold for motion (1-100, lower = more sensitive)
-  
+
   # Person tracking
   person_cooldown_seconds: 30.0   # Seconds to wait before re-detecting same person
   bbox_overlap_threshold: 0.6     # Bounding box overlap for same person (0.0-1.0)
@@ -54,11 +54,11 @@ detection:
 storage:
   # Paths
   path: "recordings"              # Directory for recordings, GIFs, and logs
-  
+
   # Retention policy
   retention_hours: 24             # Hours to keep recordings before auto-deletion
   aggressive_cleanup_hours: 12    # Hours to keep when disk space is low
-  
+
   # Disk space management
   low_space_threshold_gb: 1.0     # Trigger aggressive cleanup below this free space (GB)
 
@@ -70,7 +70,7 @@ notifications:
   # GIF generation
   gif_for_motion: false           # Generate GIF for motion-only events (no person)
   gif_for_person: true            # Generate GIF for person detection events
-  
+
   # GIF quality settings
   gif_duration: 3                 # Duration of GIF in seconds
   gif_fps: 15                     # FPS for internal GIF generation
@@ -85,7 +85,7 @@ notifications:
 system:
   # Monitoring
   check_interval: 5.0             # Seconds between system health checks
-  
+
   # Logging
   log_level: "INFO"               # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
   log_format: "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
@@ -100,27 +100,26 @@ advanced:
   # AI/GPU optimization
   yolo_warmup_size: 224           # Dummy frame size for YOLO warmup (pixels)
   gpu_memory_reserve: 0.2         # Fraction of GPU memory to keep free (0.0-1.0)
-  
+
   # GIF processing
   gif_max_dimension: 640          # Maximum width/height for GIF frames (pixels)
   gif_worker_threads: 2           # Number of parallel GIF generation threads
-  
+
   # Background subtraction
   bg_detect_shadows: true         # Enable shadow detection in motion detection
-  
+
   # Telegram timeouts
   telegram_read_timeout: 30       # Read timeout for Telegram operations (seconds)
   telegram_write_timeout: 60      # Write timeout for Telegram file uploads (seconds)
-  
+
   # Analytics
   analytics_figure_width: 22      # Analytics chart width (inches)
   analytics_figure_height: 5.5    # Analytics chart height (inches)
   analytics_intervals:            # Time binning for analytics (minutes)
     - 5     # For 0-6 hours
-    - 15    # For 6-24 hours  
+    - 15    # For 6-24 hours
     - 60    # For 24-72 hours
     - 120   # For 72+ hours
-  
+
   # UI overlay scaling
   ui_scale_base: 320              # Base resolution for UI scaling calculations
-
