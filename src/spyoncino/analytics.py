@@ -110,7 +110,7 @@ class EventLogger:
         try:
             # Create all tables defined in Base metadata
             Base.metadata.create_all(self.engine)
-            self.logger.info(f"Event database initialized: {self.db_path}")
+            self.logger.debug(f"Event database initialized: {self.db_path}")
             
         except Exception as e:
             self.logger.error(f"Database initialization failed: {e}")

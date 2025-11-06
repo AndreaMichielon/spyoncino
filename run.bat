@@ -121,10 +121,21 @@ if not defined SPYONCINO_PYTORCH (
     )
 )
 
+REM Install PyTorch first with correct version, then install spyoncino
 if defined USE_PIP (
-    pip install -e . %INDEX_URL%
+    if "%INDEX_URL%"=="" (
+        pip install torch torchvision
+    ) else (
+        pip install torch torchvision %INDEX_URL%
+    )
+    pip install -e .
 ) else (
-    uv pip install -e . %INDEX_URL%
+    if "%INDEX_URL%"=="" (
+        uv pip install torch torchvision
+    ) else (
+        uv pip install torch torchvision %INDEX_URL%
+    )
+    uv pip install -e .
 )
 
 if errorlevel 1 (
@@ -133,6 +144,28 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+
+REM Verify PyTorch installation
+echo Verifying PyTorch installation...
+python -c "import torch; cuda=torch.cuda.is_available(); print(f'  PyTorch {torch.__version__}'); print(f'  CUDA available: {cuda}')" 2>nul
+if errorlevel 1 (
+    echo   WARNING: Could not verify PyTorch installation
+) else (
+    python -c "import torch; cuda=torch.cuda.is_available(); driver='nvidia-smi' if cuda else 'none'; exit(0 if cuda or not '%INDEX_URL%'=='--index-url https://download.pytorch.org/whl/cu118' else 1)" 2>nul
+    if errorlevel 1 (
+        echo   WARNING: GPU detected but PyTorch has no CUDA support!
+        echo   This usually means UV cached the CPU version.
+        echo   Fixing: Reinstalling PyTorch with CUDA...
+        if defined USE_PIP (
+            pip uninstall torch torchvision -y
+            pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --force-reinstall --no-cache-dir
+        ) else (
+            echo y | uv pip uninstall torch torchvision
+            uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --reinstall --refresh
+        )
+    )
+)
+
 echo   Package installed successfully
 echo.
 
@@ -141,7 +174,7 @@ REM Step 5: Run the system
 REM ========================================
 echo [5/5] Starting Spyoncino Security System...
 echo.
-echo TIP: Check config/setting.json and config/secrets.json before first run
+echo TIP: Edit config/config.yaml, config/telegram.yaml, and config/secrets.yaml
 echo Press Ctrl+C to stop the system
 echo ========================================
 echo.

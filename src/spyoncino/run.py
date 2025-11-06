@@ -8,8 +8,8 @@ with motion detection, person recognition, and Telegram notifications.
 
 import os
 import logging
-import json
 import sys
+import yaml
 from pathlib import Path
 from typing import Dict, Any
 
@@ -42,7 +42,7 @@ class SecuritySystemRunner:
         Initialize the security system runner.
         
         Args:
-            config_dir: Path to configuration directory containing setting.json and secrets.json
+            config_dir: Path to configuration directory containing YAML config files
             
         Raises:
             ValueError: If config_dir is empty or invalid
@@ -53,8 +53,9 @@ class SecuritySystemRunner:
         # Resolve paths relative to project root (parent of src/spyoncino)
         project_root = Path(__file__).parent.parent.parent
         self.config_dir = project_root / config_dir
-        self.config_path = self.config_dir / "setting.json"
-        self.secrets_path = self.config_dir / "secrets.json"
+        self.config_path = self.config_dir / "config.yaml"
+        self.telegram_path = self.config_dir / "telegram.yaml"
+        self.secrets_path = self.config_dir / "secrets.yaml"
         self.config = self._load_configuration()
         
         # Components (initialized later)
@@ -68,61 +69,129 @@ class SecuritySystemRunner:
         self.logger = logging.getLogger(self.__class__.__name__)
     
     def _load_configuration(self) -> Dict[str, Any]:
-        """Load configuration from config/setting.json and optional config/secrets.json."""
+        """Load configuration from YAML files: config.yaml, telegram.yaml, and optional secrets.yaml."""
         config = {}
         
         # Load main configuration (required)
         if not self.config_path.exists():
             raise FileNotFoundError(
                 f"Configuration file not found: {self.config_path}\n"
-                f"Please create config/setting.json based on the example or use an existing configuration file."
+                f"Please create config/config.yaml based on the example or copy from the template."
             )
         
         try:
             with open(self.config_path, "r", encoding='utf-8') as f:
-                config = json.load(f)
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            raise ValueError(f"Invalid JSON in config file: {e}")
+                main_config = yaml.safe_load(f) or {}
+                config.update(main_config)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in config file: {e}")
         except (OSError, IOError) as e:
             raise RuntimeError(f"Cannot read config file: {e}")
+        
+        # Load telegram configuration (required)
+        if not self.telegram_path.exists():
+            raise FileNotFoundError(
+                f"Telegram configuration file not found: {self.telegram_path}\n"
+                f"Please create config/telegram.yaml based on the example."
+            )
+        
+        try:
+            with open(self.telegram_path, "r", encoding='utf-8') as f:
+                telegram_config = yaml.safe_load(f) or {}
+                config.update(telegram_config)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in telegram config file: {e}")
+        except (OSError, IOError) as e:
+            raise RuntimeError(f"Cannot read telegram config file: {e}")
         
         # Load secrets file (optional - fallback to env vars)
         if self.secrets_path.exists():
             try:
                 with open(self.secrets_path, "r", encoding='utf-8') as f:
-                    secrets = json.load(f)
+                    secrets = yaml.safe_load(f) or {}
                     config.update(secrets)
-            except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                raise ValueError(f"Invalid JSON in secrets file: {e}")
+            except yaml.YAMLError as e:
+                raise ValueError(f"Invalid YAML in secrets file: {e}")
             except (OSError, IOError) as e:
                 raise RuntimeError(f"Cannot read secrets file: {e}")
         else:
             # Fall back to environment variables
-            import os
-            config["TELEGRAM_TOKEN"] = os.environ.get("TELEGRAM_BOT_TOKEN", config.get("TELEGRAM_TOKEN", ""))
-            config["CHAT_ID"] = os.environ.get("TELEGRAM_CHAT_ID", config.get("CHAT_ID"))
-            config["SETUP_PASSWORD"] = os.environ.get("SECURITY_SETUP_PASSWORD", config.get("SETUP_PASSWORD"))
+            config.setdefault("telegram", {})
+            config.setdefault("authentication", {})
+            config["telegram"]["token"] = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+            config["telegram"]["chat_id"] = os.environ.get("TELEGRAM_CHAT_ID")
+            config["authentication"]["setup_password"] = os.environ.get("SECURITY_SETUP_PASSWORD")
+
+        # Flatten nested config for backward compatibility with existing code
+        flattened = {}
+        
+        # Map YAML structure to flat config keys
+        if "camera" in config:
+            flattened["USB_PORT"] = config["camera"].get("usb_port", 0)
+            flattened["CAMERA_WIDTH"] = config["camera"].get("width", 1280)
+            flattened["CAMERA_HEIGHT"] = config["camera"].get("height", 720)
+            flattened["CAMERA_FPS"] = config["camera"].get("fps", 15)
+            flattened["CAMERA_BRIGHTNESS"] = config["camera"].get("brightness")
+            flattened["CAMERA_CONTRAST"] = config["camera"].get("contrast")
+        
+        if "detection" in config:
+            flattened["INTERVAL"] = config["detection"].get("interval", 2.0)
+            flattened["RECORD_FRAMES"] = config["detection"].get("record_frames", 50)
+            flattened["DETECTION_CONFIDENCE"] = config["detection"].get("confidence", 0.25)
+            flattened["MAX_BATCH_SIZE"] = config["detection"].get("max_batch_size", 32)
+            flattened["MOTION_THRESHOLD"] = config["detection"].get("motion_threshold", 5)
+            flattened["PERSON_COOLDOWN_SECONDS"] = config["detection"].get("person_cooldown_seconds", 30.0)
+            flattened["BBOX_OVERLAP_THRESHOLD"] = config["detection"].get("bbox_overlap_threshold", 0.6)
+        
+        if "storage" in config:
+            flattened["STORAGE_PATH"] = config["storage"].get("path", "recordings")
+            flattened["RETENTION_HOURS"] = config["storage"].get("retention_hours", 24)
+            flattened["LOW_SPACE_THRESHOLD_GB"] = config["storage"].get("low_space_threshold_gb", 1.0)
+            flattened["AGGRESSIVE_CLEANUP_HOURS"] = config["storage"].get("aggressive_cleanup_hours", 12)
+        
+        if "notifications" in config:
+            flattened["GIF_FOR_MOTION"] = config["notifications"].get("gif_for_motion", False)
+            flattened["GIF_FOR_PERSON"] = config["notifications"].get("gif_for_person", True)
+            flattened["GIF_DURATION"] = config["notifications"].get("gif_duration", 3)
+            flattened["GIF_FPS"] = config["notifications"].get("gif_fps", 15)
+            flattened["NOTIFICATION_GIF_FPS"] = config["notifications"].get("notification_gif_fps", 10)
+            flattened["MAX_FILE_SIZE_MB"] = config["notifications"].get("max_file_size_mb", 50.0)
+            flattened["NOTIFICATION_RATE_LIMIT"] = config["notifications"].get("notification_rate_limit", 5)
+            flattened["MAX_GIF_FRAMES"] = config["notifications"].get("max_gif_frames", 20)
+        
+        if "system" in config:
+            flattened["CHECK_INTERVAL"] = config["system"].get("check_interval", 5.0)
+            flattened["LOG_LEVEL"] = config["system"].get("log_level", "INFO")
+            flattened["LOG_FORMAT"] = config["system"].get("log_format", "%(asctime)s [%(levelname)8s] %(name)s: %(message)s")
+            flattened["LOG_MAX_SIZE_MB"] = config["system"].get("log_max_size_mb", 10)
+            flattened["LOG_BACKUP_COUNT"] = config["system"].get("log_backup_count", 3)
+        
+        if "security" in config:
+            flattened["NOTIFICATION_CHAT_ID"] = config["security"].get("notification_chat_id")
+            flattened["ALLOW_GROUP_COMMANDS"] = config["security"].get("allow_group_commands", True)
+            flattened["SILENT_UNAUTHORIZED"] = config["security"].get("silent_unauthorized", True)
+        
+        if "telegram" in config:
+            flattened["TELEGRAM_TOKEN"] = config["telegram"].get("token", "")
+            flattened["CHAT_ID"] = config["telegram"].get("chat_id")
+        
+        if "authentication" in config:
+            flattened["SETUP_PASSWORD"] = config["authentication"].get("setup_password")
+            flattened["SUPERUSER_ID"] = config["authentication"].get("superuser_id")
+            flattened["USER_WHITELIST"] = config["authentication"].get("user_whitelist", [])
 
         # Convert CHAT_ID to int if provided
-        if config.get("CHAT_ID"):
+        if flattened.get("CHAT_ID"):
             try:
-                config["CHAT_ID"] = int(config["CHAT_ID"])
+                flattened["CHAT_ID"] = int(flattened["CHAT_ID"])
             except (ValueError, TypeError):
                 if hasattr(self, 'logger'):
                     self.logger.warning("Invalid CHAT_ID format, ignoring")
-                config["CHAT_ID"] = None
-
-        # Flatten nested config for backward compatibility
-        flattened = {}
-        for key, value in config.items():
-            if isinstance(value, dict) and not key.startswith('_'):
-                flattened.update(value)
-            elif not key.startswith('_'):
-                flattened[key] = value
+                flattened["CHAT_ID"] = None
         
         # Validate required settings
         if not flattened.get("TELEGRAM_TOKEN"):
-            raise ValueError("TELEGRAM_TOKEN is required (add to config/secrets.json or set TELEGRAM_BOT_TOKEN env var)")
+            raise ValueError("TELEGRAM_TOKEN is required (add to config/secrets.yaml or set TELEGRAM_BOT_TOKEN env var)")
         
         return flattened
 
@@ -164,7 +233,7 @@ class SecuritySystemRunner:
             
             # Set specific log levels for noisy libraries
             logging.getLogger("ultralytics").setLevel(logging.WARNING)
-            logging.getLogger("telegram").setLevel(logging.INFO)
+            logging.getLogger("telegram").setLevel(logging.WARNING)
             logging.getLogger("apscheduler").setLevel(logging.WARNING)
             logging.getLogger("httpx").setLevel(logging.WARNING)
             logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -174,11 +243,11 @@ class SecuritySystemRunner:
 
     def _initialize_components(self) -> None:
         """Initialize all system components with configuration."""
-        self.logger.info("Initializing security system components...")
+        self.logger.info("Initializing components...")
         
         try:
             if not self.config.get("TELEGRAM_TOKEN"):
-                raise ValueError("TELEGRAM_TOKEN is required (add to config/secrets.json or set TELEGRAM_BOT_TOKEN env var)")
+                raise ValueError("TELEGRAM_TOKEN is required (add to config/secrets.yaml or set TELEGRAM_BOT_TOKEN env var)")
             usb_port = self.config.get("USB_PORT", 0)
             if isinstance(usb_port, int) and usb_port < 0:
                 raise ValueError("USB_PORT must be non-negative")
@@ -267,7 +336,21 @@ class SecuritySystemRunner:
             except Exception as e:
                 raise RuntimeError(f"Failed to initialize bot: {e}")
         
-            self.logger.info("All components initialized successfully")
+            # Log initialization summary with GPU diagnostics
+            import torch
+            gpu_available = torch.cuda.is_available()
+            if gpu_available:
+                gpu_name = torch.cuda.get_device_name(0)
+                gpu_status = f"GPU: {gpu_name}"
+            else:
+                gpu_status = "CPU-only"
+                # Log warning if CUDA not detected
+                if hasattr(torch.version, 'cuda') and torch.version.cuda:
+                    self.logger.warning(f"CUDA not detected! PyTorch built with CUDA {torch.version.cuda} but no GPU found")
+                else:
+                    self.logger.warning("PyTorch installed without CUDA support - using CPU only")
+            
+            self.logger.info(f"✓ All components ready [{gpu_status}, Batch: {self.security_system.batch_size}]")
         
         except Exception as e:
             self.logger.error(f"Component initialization failed: {e}")
@@ -284,20 +367,21 @@ class SecuritySystemRunner:
             self.logger.info("Starting AI-Powered Security System")
             self.logger.info("=" * 50)
             
+            # Print configuration preview
+            self._print_configuration_preview()
+            
             # Initialize all components
             self._initialize_components()
-            
-            # Log system information
-            self._log_system_info()
             
             # Start the event manager (this will start the security system)
             if not self.event_manager.start():
                 raise RuntimeError("Failed to start security event manager")
             
-            self.logger.info("Security monitoring started successfully")
+            # Log system ready status
+            self._log_system_ready()
             
             # Start the Telegram bot (this will block until interrupted)
-            self.logger.info("Starting Telegram bot interface...")
+            self.logger.info("✓ Telegram bot starting...")
             self.bot.run()  # This blocks until Ctrl+C or error
             
         except KeyboardInterrupt:
@@ -308,16 +392,66 @@ class SecuritySystemRunner:
         finally:
             self._shutdown()
     
-    def _log_system_info(self) -> None:
-        """Log important system information."""
-        self.logger.info("System Configuration:")
-        self.logger.info(f"  • Camera Source: {self.capture.source}")
-        self.logger.info(f"  • Detection Interval: {self.security_system.interval}s")
-        self.logger.info(f"  • Recording Frames: {self.security_system.record_frames}")
-        self.logger.info(f"  • Storage Path: {self.event_manager.event_folder}")
-        self.logger.info(f"  • Retention: {self.event_manager.retention_hours}h")
-        self.logger.info(f"  • GPU Available: {self.security_system.status['gpu_available']}")
-        self.logger.info(f"  • YOLO Batch Size: {self.security_system.batch_size}")
+    def _print_configuration_preview(self) -> None:
+        """Print current configuration with sensitive data masked."""
+        print("\n" + "="*60)
+        print("CURRENT CONFIGURATION")
+        print("="*60)
+        
+        # Camera settings
+        print("\n📹 CAMERA:")
+        print(f"  • Source: {self.config.get('USB_PORT', 0)}")
+        print(f"  • Resolution: {self.config.get('CAMERA_WIDTH')}x{self.config.get('CAMERA_HEIGHT')}")
+        print(f"  • FPS: {self.config.get('CAMERA_FPS')}")
+        
+        # Detection settings
+        print("\n🔍 DETECTION:")
+        print(f"  • Interval: {self.config.get('INTERVAL')}s")
+        print(f"  • Confidence: {self.config.get('DETECTION_CONFIDENCE')}")
+        print(f"  • Motion Threshold: {self.config.get('MOTION_THRESHOLD')}")
+        print(f"  • Person Cooldown: {self.config.get('PERSON_COOLDOWN_SECONDS')}s")
+        
+        # Storage settings
+        print("\n💾 STORAGE:")
+        print(f"  • Path: {self.config.get('STORAGE_PATH')}")
+        print(f"  • Retention: {self.config.get('RETENTION_HOURS')}h")
+        print(f"  • Low Space Threshold: {self.config.get('LOW_SPACE_THRESHOLD_GB')}GB")
+        
+        # Notification settings
+        print("\n🔔 NOTIFICATIONS:")
+        print(f"  • GIF for Motion: {self.config.get('GIF_FOR_MOTION')}")
+        print(f"  • GIF for Person: {self.config.get('GIF_FOR_PERSON')}")
+        print(f"  • Rate Limit: {self.config.get('NOTIFICATION_RATE_LIMIT')}/min")
+        
+        # Security settings (masked)
+        print("\n🔐 SECURITY:")
+        token = self.config.get('TELEGRAM_TOKEN', '')
+        masked_token = f"{token[:10]}...{token[-4:]}" if len(token) > 14 else "****"
+        print(f"  • Telegram Token: {masked_token}")
+        
+        chat_id = self.config.get('CHAT_ID')
+        print(f"  • Chat ID: {chat_id if chat_id else 'Auto-detect'}")
+        
+        password = self.config.get('SETUP_PASSWORD')
+        print(f"  • Setup Password: {'****' if password else 'Not set'}")
+        
+        superuser = self.config.get('SUPERUSER_ID')
+        print(f"  • Superuser ID: {superuser if superuser else 'Not configured'}")
+        
+        whitelist = self.config.get('USER_WHITELIST', [])
+        print(f"  • Whitelisted Users: {len(whitelist)}")
+        
+        # System settings
+        print("\n⚙️  SYSTEM:")
+        print(f"  • Log Level: {self.config.get('LOG_LEVEL')}")
+        print(f"  • Check Interval: {self.config.get('CHECK_INTERVAL')}s")
+        
+        print("\n" + "="*60 + "\n")
+    
+    def _log_system_ready(self) -> None:
+        """Log system ready status."""
+        self.logger.info(f"✓ Camera connected: {self.capture.source}")
+        self.logger.info(f"✓ Monitoring active (interval: {self.security_system.interval}s)")
     
     def _shutdown(self) -> None:
         """Gracefully shutdown all system components."""

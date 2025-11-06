@@ -22,7 +22,7 @@
 - Smart GIF generation with temporal sampling and compression
 - Automatic storage cleanup with configurable retention
 - **Secure multi-user access control with password-based setup**
-- **Encrypted configuration management with separate secrets file**
+- **Well-organized YAML configuration with separate secrets file**
 
 ## Quick Start
 
@@ -51,15 +51,30 @@ The launcher will automatically:
 - ✅ Install UV package manager if missing
 - ✅ Create virtual environment
 - ✅ **Auto-detect GPU and install optimal PyTorch version**
+- ✅ **Verify PyTorch installation and auto-fix if wrong version detected**
 - ✅ Install all dependencies
 - ✅ Run Spyoncino
 
-To manually override GPU detection:
-```bash
-export SPYONCINO_PYTORCH=cpu  # Linux/Mac
-set SPYONCINO_PYTORCH=cpu     # Windows
-./run.sh  # or run.bat
-```
+**GPU Detection Modes:**
+
+1. **Automatic (Default)**: Detects NVIDIA GPU and installs correct PyTorch
+   ```bash
+   ./run.sh  # or run.bat
+   ```
+
+2. **Force GPU mode**: Install CUDA-enabled PyTorch even if no GPU detected
+   ```bash
+   export SPYONCINO_PYTORCH=cuda  # Linux/Mac
+   set SPYONCINO_PYTORCH=cuda     # Windows
+   ./run.sh  # or run.bat
+   ```
+
+3. **Force CPU mode**: Install CPU-only PyTorch (smaller, faster install)
+   ```bash
+   export SPYONCINO_PYTORCH=cpu  # Linux/Mac
+   set SPYONCINO_PYTORCH=cpu     # Windows
+   ./run.sh  # or run.bat
+   ```
 
 #### Manual Installation
 
@@ -88,39 +103,27 @@ set SPYONCINO_PYTORCH=cpu     # Windows
 
 3. **Configure system**
    
-   Create `config/setting.json`:
-   ```json
-   {
-     "USB_PORT": 0,
-     "CAMERA_WIDTH": 1280,
-     "CAMERA_HEIGHT": 720,
-     "DETECTION_CONFIDENCE": 0.25,
-     "MOTION_THRESHOLD": 5000,
-     "STORAGE_PATH": "recordings",
-     "GIF_FOR_MOTION": false,
-     "GIF_FOR_PERSON": true
-   }
-   ```
+   The configuration files are already created with sensible defaults. You only need to create the secrets file:
    
-   Create `config/secrets.json`:
    ```bash
-   cp config/secrets.json.example config/secrets.json
+   cp config/secrets.yaml.example config/secrets.yaml
    ```
    
-   Edit with your credentials:
-   ```json
-   {
-     "TELEGRAM_TOKEN": "your_bot_token_here",
-     "CHAT_ID": null,
-     "SETUP_PASSWORD": "YourSecurePassword123!",
-     "SUPERUSER_ID": null,
-     "USER_WHITELIST": []
-   }
+   Edit `config/secrets.yaml` with your Telegram credentials:
+   ```yaml
+   telegram:
+     token: "your_bot_token_here"    # Get from @BotFather
+     chat_id: null                   # Auto-detected from first message
+   
+   authentication:
+     setup_password: "YourSecurePassword123!"  # For /setup command
+     superuser_id: null              # Auto-set during setup
+     user_whitelist: []              # Managed via bot commands
    ```
 
 4. **Secure the secrets file**
    ```bash
-   chmod 600 config/secrets.json
+   chmod 600 config/secrets.yaml
    ```
 
 5. **Run**
@@ -165,6 +168,8 @@ set SPYONCINO_PYTORCH=cpu     # Windows
 /config gif_motion on         # Enable motion GIFs
 ```
 
+> 💡 **Tip:** You can also edit `config/config.yaml` directly for permanent changes
+
 **Admin (Superuser Only):**
 - `/whitelist_add <user_id>` - Authorize users
 - `/whitelist_remove <user_id>` - Remove user access  
@@ -174,23 +179,62 @@ set SPYONCINO_PYTORCH=cpu     # Windows
 
 ## Configuration Files
 
-### config/setting.json (Safe to commit)
+Configuration is split into three YAML files for better organization:
+
+### config/config.yaml (Safe to commit)
+General system settings organized by category:
+
+**Camera Settings:**
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `USB_PORT` | `0` | Camera device index |
-| `INTERVAL` | `2.0` | Detection frequency (seconds) |
-| `DETECTION_CONFIDENCE` | `0.25` | AI sensitivity (0.1-0.9) |
-| `RETENTION_HOURS` | `24` | Recording storage duration |
-| `MOTION_THRESHOLD` | `5000` | Motion detection sensitivity |
+| `usb_port` | `0` | Camera device index |
+| `width` / `height` | `1280x720` | Video resolution |
+| `fps` | `15` | Frames per second |
+| `brightness` / `contrast` | `null` | Optional camera adjustments |
 
-### config/secrets.json (Never commit - already in .gitignore)
+**Detection Settings:**
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `interval` | `2.0` | Detection frequency (seconds) |
+| `confidence` | `0.25` | AI sensitivity (0.1-0.9) |
+| `motion_threshold` | `5` | Motion detection sensitivity |
+| `person_cooldown_seconds` | `30.0` | Cooldown between person detections |
+
+**Storage Settings:**
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `path` | `recordings` | Storage directory |
+| `retention_hours` | `24` | Recording retention duration |
+| `low_space_threshold_gb` | `1.0` | Free space threshold |
+
+**Notification Settings:**
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `gif_for_motion` | `false` | Generate GIF for motion events |
+| `gif_for_person` | `true` | Generate GIF for person events |
+| `gif_fps` | `15` | Internal GIF quality |
+| `notification_gif_fps` | `10` | Telegram GIF quality |
+
+### config/telegram.yaml (Safe to commit)
+Telegram bot and security settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `notification_chat_id` | `null` | Target chat for notifications |
+| `allow_group_commands` | `true` | Enable group chat commands |
+| `silent_unauthorized` | `true` | Silent mode for unauthorized users |
+| `notification_rate_limit` | `5` | Max notifications per minute |
+
+### config/secrets.yaml (Never commit - already in .gitignore)
+Sensitive credentials and authentication:
+
 | Setting | Required | Description |
 |---------|----------|-------------|
-| `TELEGRAM_TOKEN` | Yes | Bot token from @BotFather |
-| `SETUP_PASSWORD` | No | First-time setup password |
-| `CHAT_ID` | No | Auto-detected from first message |
-| `SUPERUSER_ID` | No | Set automatically during setup |
-| `USER_WHITELIST` | No | Managed via bot commands |
+| `telegram.token` | Yes | Bot token from @BotFather |
+| `telegram.chat_id` | No | Auto-detected from first message |
+| `authentication.setup_password` | Recommended | First-time setup password |
+| `authentication.superuser_id` | No | Set automatically during `/setup` |
+| `authentication.user_whitelist` | No | Managed via bot commands |
 
 ## Security Features
 
@@ -198,7 +242,7 @@ set SPYONCINO_PYTORCH=cpu     # Windows
 - **Password-based setup**: Prevents unauthorized superuser access
 - **Rate limiting**: 5 failed attempts = temporary lockout
 - **Input sanitization**: Prevents command injection
-- **Separate secrets file**: Isolated sensitive data
+- **Separate secrets file**: YAML-based isolated sensitive data
 - **User whitelisting**: Granular access control
 
 **Alternative: Environment Variables**
@@ -236,11 +280,25 @@ ls /dev/video*  # Linux - list cameras
 - Reduce camera resolution in settings
 - Lower `MAX_BATCH_SIZE` for GPU memory
 
-**PyTorch installation issues:**
-- For manual control: `export SPYONCINO_PYTORCH=cpu` or `=cuda`
+**PyTorch/GPU issues:**
 - Check GPU drivers: `nvidia-smi` should show your GPU
+- For manual control: `export SPYONCINO_PYTORCH=cpu` or `=cuda`
 - For CPU-only: `uv pip install -e . --index-url https://download.pytorch.org/whl/cpu`
 - For CUDA: `uv pip install -e . --index-url https://download.pytorch.org/whl/cu118`
+
+**System shows "CPU-only" despite having GPU:**
+1. The launcher auto-fixes this! Just run `run.bat` or `run.sh` again
+2. It will detect the wrong PyTorch version and reinstall with CUDA automatically
+3. Or manually force reinstall:
+   ```bash
+   # Windows
+   set SPYONCINO_PYTORCH=cuda
+   run.bat
+   
+   # Linux/Mac
+   export SPYONCINO_PYTORCH=cuda
+   ./run.sh
+   ```
 
 **Bot unresponsive:**
 - Verify `TELEGRAM_TOKEN` is correct
@@ -248,7 +306,7 @@ ls /dev/video*  # Linux - list cameras
 - Review logs in `recordings/security_system.log`
 
 **Security issues:**
-- Ensure `config/secrets.json` has proper permissions (600)
+- Ensure `config/secrets.yaml` has proper permissions (600)
 - Use strong setup password
 - Monitor failed login attempts in logs
 
@@ -256,13 +314,13 @@ ls /dev/video*  # Linux - list cameras
 
 **Production:**
 - Use environment variables for secrets
-- Set file permissions: `chmod 600 config/secrets.json`
+- Set file permissions: `chmod 600 config/secrets.yaml`
 - Regularly review logs and user whitelist
 
 **Maintenance:**
 - Monitor storage usage
 - Update dependencies: `uv pip install --upgrade -e .`
-- Backup `config/setting.json` only
+- Backup `config/config.yaml` and `config/telegram.yaml` only (never commit `secrets.yaml`)
 
 ## Technical Details
 

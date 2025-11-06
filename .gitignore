@@ -213,9 +213,15 @@ __marimo__/
 
 # Spyoncino-specific files
 # Sensitive configuration - never commit
+config/secrets.yaml
+config/secrets.yml
 config/secrets.json
+*.secrets.yaml
+*.secrets.yml
 *.secrets.json
 *.secret
+secrets.yaml
+secrets.yml
 secrets.json
 *.key
 *.token

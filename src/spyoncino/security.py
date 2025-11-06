@@ -95,7 +95,7 @@ class SecuritySystem:
 
         # Logging
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.info(f"Security system initialized with max_batch_size={self.max_batch_size}")
+        self.logger.debug(f"Security system initialized with max_batch_size={self.max_batch_size}")
         
         # State management
         self.is_active = False
@@ -177,7 +177,7 @@ class SecuritySystem:
             # Optimize batch size for available VRAM
             self.batch_size = self._optimize_batch_size()
             
-            self.logger.info(f"YOLO model loaded: {model_path}")
+            self.logger.debug(f"YOLO model loaded: {model_path}")
             
         except (ImportError, OSError, RuntimeError) as e:
             self.logger.error(f"Failed to initialize YOLO: {e}")
@@ -306,7 +306,7 @@ class SecuritySystem:
         )
         self._monitor_thread.start()
         
-        self.logger.info("Security monitoring started")
+        self.logger.debug("Security monitoring started")
         return True
     
     def stop(self) -> None:
@@ -621,14 +621,14 @@ class SecuritySystem:
         if not callable(handler):
             raise TypeError("handler must be callable")
         self.on_person = handler
-        self.logger.info("Person event handler registered")
+        self.logger.debug("Person event handler registered")
 
     def set_motion_handler(self, handler: Callable[[str], None]) -> None:
         """Register handler for motion detection events."""
         if not callable(handler):
             raise TypeError("handler must be callable")
         self.on_motion = handler
-        self.logger.info("Motion event handler registered")
+        self.logger.debug("Motion event handler registered")
         
     def _record_frames_streaming(self):
         """

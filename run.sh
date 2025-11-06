@@ -105,10 +105,21 @@ else
     fi
 fi
 
+# Install PyTorch first with correct version, then install spyoncino
 if [ -n "$USE_PIP" ]; then
-    pip install -e . $INDEX_URL
+    if [ -z "$INDEX_URL" ]; then
+        pip install torch torchvision
+    else
+        pip install torch torchvision $INDEX_URL
+    fi
+    pip install -e .
 else
-    uv pip install -e . $INDEX_URL
+    if [ -z "$INDEX_URL" ]; then
+        uv pip install torch torchvision
+    else
+        uv pip install torch torchvision $INDEX_URL
+    fi
+    uv pip install -e .
 fi
 
 if [ $? -ne 0 ]; then
@@ -116,6 +127,28 @@ if [ $? -ne 0 ]; then
     echo "Try running manually: uv pip install -e ."
     exit 1
 fi
+
+# Verify PyTorch installation
+echo "Verifying PyTorch installation..."
+python3 -c "import torch; cuda=torch.cuda.is_available(); print(f'  PyTorch {torch.__version__}'); print(f'  CUDA available: {cuda}')" 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "  WARNING: Could not verify PyTorch installation"
+else
+    python3 -c "import torch; exit(0 if torch.cuda.is_available() or '$INDEX_URL' != '--index-url https://download.pytorch.org/whl/cu118' else 1)" 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo "  WARNING: GPU detected but PyTorch has no CUDA support!"
+        echo "  This usually means UV cached the CPU version."
+        echo "  Fixing: Reinstalling PyTorch with CUDA..."
+        if [ -n "$USE_PIP" ]; then
+            pip uninstall torch torchvision -y
+            pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --force-reinstall --no-cache-dir
+        else
+            yes | uv pip uninstall torch torchvision
+            uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --reinstall --refresh
+        fi
+    fi
+fi
+
 echo "  Package installed successfully"
 echo
 
@@ -124,7 +157,7 @@ echo
 # ========================================
 echo "[5/5] Starting Spyoncino Security System..."
 echo
-echo "TIP: Check config/setting.json and config/secrets.json before first run"
+echo "TIP: Edit config/config.yaml, config/telegram.yaml, and config/secrets.yaml"
 echo "Press Ctrl+C to stop the system"
 echo "========================================"
 echo

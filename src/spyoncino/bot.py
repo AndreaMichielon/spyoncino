@@ -188,7 +188,7 @@ class SecurityTelegramBot:
         
         # Logging
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.info("Security Telegram bot initialized")
+        self.logger.debug("Security Telegram bot initialized")
     
     def _is_private_chat(self, chat_id: Optional[int] = None) -> bool:
         """Check if current or given chat is private."""
@@ -1433,7 +1433,7 @@ class SecurityTelegramBot:
     async def start_bot(self) -> None:
         """Start the Telegram bot."""
         try:
-            self.logger.info("Starting Telegram bot...")
+            self.logger.debug("Starting Telegram bot...")
             
             # Initialize application
             await self.app.initialize()
@@ -1452,7 +1452,7 @@ class SecurityTelegramBot:
                 allowed_updates=Update.ALL_TYPES
             )
             
-            self.logger.info("Telegram bot started successfully")
+            self.logger.debug("Telegram bot started successfully")
             
         except Exception as e:
             self.logger.error(f"Failed to start bot: {e}", exc_info=True)
@@ -1481,7 +1481,7 @@ class SecurityTelegramBot:
         try:
             await self.start_bot()
             
-            self.logger.info("Bot running. Press Ctrl+C to stop...")
+            self.logger.debug("Bot running. Press Ctrl+C to stop...")
             
             # Wait indefinitely
             stop_event = asyncio.Event()

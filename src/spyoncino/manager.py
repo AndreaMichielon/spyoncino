@@ -96,7 +96,7 @@ class SecurityEventManager:
         
         # Logging
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.info(f"Event manager initialized: {self.event_folder}")
+        self.logger.debug(f"Event manager initialized: {self.event_folder}")
 
         # Log startup
         self.event_logger.log_event(SecurityEvent(
@@ -182,7 +182,7 @@ class SecurityEventManager:
         )
         self._monitor_thread.start()
         
-        self.logger.info("Security event manager started")
+        self.logger.debug("Security event manager started")
         return True
     
     def stop(self, timeout: float = 10.0) -> None:
