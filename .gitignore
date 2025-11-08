@@ -187,14 +187,20 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#  and can be added to the global gitignore or merged into this file. However, if you prefer,
 #  you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 
 # Ruff stuff:
 .ruff_cache/
+
+# Testing and coverage
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
 
 # PyPI configuration file
 .pypirc
@@ -213,9 +219,15 @@ __marimo__/
 
 # Spyoncino-specific files
 # Sensitive configuration - never commit
+config/secrets.yaml
+config/secrets.yml
 config/secrets.json
+*.secrets.yaml
+*.secrets.yml
 *.secrets.json
 *.secret
+secrets.yaml
+secrets.yml
 secrets.json
 *.key
 *.token

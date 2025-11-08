@@ -5,21 +5,49 @@ Handles event logging, data storage, and timeline visualization
 for security system monitoring and analysis.
 """
 
-import sqlite3
+import io
 import json
 import logging
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional, Any
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import Enum
-import io
-import base64
+from pathlib import Path
+from typing import Any
+
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
+from sqlalchemy.orm import Session, declarative_base, scoped_session, sessionmaker
+from sqlalchemy.pool import QueuePool
+from sqlalchemy.sql import func
+
+# SQLAlchemy declarative base
+Base = declarative_base()
+
+
+class EventModel(Base):
+    """SQLAlchemy ORM model for security events."""
+
+    __tablename__ = "events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime, nullable=False, index=True)
+    event_type = Column(String, nullable=False, index=True)
+    message = Column(Text, nullable=False)
+    event_metadata = Column(Text, nullable=True)
+    severity = Column(String, default="info", nullable=False)
+    created_at = Column(DateTime, default=func.current_timestamp(), nullable=False)
+
+    def __repr__(self):
+        return f"<Event(id={self.id}, type={self.event_type}, time={self.timestamp})>"
+
 
 class EventType(Enum):
     """Event types for classification."""
+
     MOTION = "motion"
     PERSON = "person"
     DISCONNECT = "disconnect"
@@ -29,435 +57,554 @@ class EventType(Enum):
     SHUTDOWN = "shutdown"
     STORAGE_WARNING = "storage_warning"
 
+
 @dataclass
 class SecurityEvent:
     """Represents a security system event."""
+
     timestamp: datetime
     event_type: EventType
     message: str
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, Any] | None = None
     severity: str = "info"  # info, warning, error
+
 
 class EventLogger:
     """
     Professional event logging system for security analytics.
-    
-    Stores events in SQLite database and provides analysis capabilities.
+
+    Stores events in SQLite database using SQLAlchemy ORM.
     """
-    
-    def __init__(self, db_path: str = "security_events.db"):
+
+    def __init__(
+        self,
+        db_path: str = "security_events.db",
+        analytics_figure_width: float = 22,
+        analytics_figure_height: float = 5.5,
+        analytics_intervals: list[int] = None,
+    ):
         """
-        Initialize the event logger.
-        
+        Initialize the event logger with SQLAlchemy and connection pooling.
+
         Args:
             db_path: Path to SQLite database file
+            analytics_figure_width: Width of analytics charts in inches
+            analytics_figure_height: Height of analytics charts in inches
+            analytics_intervals: Time intervals for binning (minutes) for different time ranges
         """
         self.db_path = Path(db_path)
         self.logger = logging.getLogger(self.__class__.__name__)
+
+        # Analytics configuration
+        self.analytics_figure_width = analytics_figure_width
+        self.analytics_figure_height = analytics_figure_height
+        self.analytics_intervals = analytics_intervals or [5, 15, 60, 120]
+
+        # Create SQLAlchemy engine with optimized connection pooling
+        db_url = f"sqlite:///{self.db_path}"
+        self.engine = create_engine(
+            db_url,
+            echo=False,
+            poolclass=QueuePool,
+            pool_size=5,  # Keep 5 connections open
+            max_overflow=10,  # Allow 10 additional connections if needed
+            pool_pre_ping=True,  # Verify connections before using
+            pool_recycle=3600,  # Recycle connections after 1 hour
+            connect_args={
+                "check_same_thread": False,  # Allow SQLite multi-threading
+                "timeout": 30,  # 30 second timeout for locks
+            },
+        )
+
+        # Create scoped session factory for thread-safe operations
+        session_factory = sessionmaker(bind=self.engine, expire_on_commit=False, autoflush=False)
+        self.SessionLocal = scoped_session(session_factory)
+
+        # Initialize database schema
         self._init_database()
-    
+
     def _init_database(self) -> None:
-        """Initialize SQLite database with events table."""
+        """Initialize database schema using SQLAlchemy ORM."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS events (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        timestamp DATETIME NOT NULL,
-                        event_type TEXT NOT NULL,
-                        message TEXT NOT NULL,
-                        metadata TEXT,
-                        severity TEXT DEFAULT 'info',
-                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
-                # Create index for faster queries
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_timestamp 
-                    ON events(timestamp)
-                """)
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_event_type 
-                    ON events(event_type)
-                """)
-                
-                conn.commit()
-                self.logger.info(f"Event database initialized: {self.db_path}")
-                
-        except sqlite3.Error as e:
+            # Create all tables defined in Base metadata
+            Base.metadata.create_all(self.engine)
+            self.logger.debug(f"Event database initialized: {self.db_path}")
+
+        except Exception as e:
             self.logger.error(f"Database initialization failed: {e}")
             raise
-    
+
+    @contextmanager
+    def get_session(self) -> Generator[Session, None, None]:
+        """
+        Context manager for database sessions with automatic cleanup.
+
+        Yields:
+            Session: SQLAlchemy session from the connection pool
+        """
+        session = self.SessionLocal()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+            self.SessionLocal.remove()  # Remove session from scoped registry
+
     def log_event(self, event: SecurityEvent) -> None:
         """
-        Log an event to the database.
-        
+        Log an event to the database using connection pooling.
+
         Args:
             event: SecurityEvent to log
         """
         try:
-            metadata_json = json.dumps(event.metadata) if event.metadata else None
-            
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute("""
-                    INSERT INTO events (timestamp, event_type, message, metadata, severity)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    event.timestamp,
-                    event.event_type.value,
-                    event.message,
-                    metadata_json,
-                    event.severity
-                ))
-                conn.commit()
-                
-        except sqlite3.Error as e:
+            with self.get_session() as session:
+                metadata_json = json.dumps(event.metadata) if event.metadata else None
+
+                # Create ORM model instance
+                event_model = EventModel(
+                    timestamp=event.timestamp,
+                    event_type=event.event_type.value,
+                    message=event.message,
+                    event_metadata=metadata_json,
+                    severity=event.severity,
+                )
+
+                session.add(event_model)
+                # Commit is handled by context manager
+
+        except Exception as e:
             self.logger.error(f"Failed to log event: {e}")
-    
+
     def get_events(
-        self, 
-        hours: int = 24, 
-        event_types: Optional[List[EventType]] = None
-    ) -> List[SecurityEvent]:
+        self, hours: int = 24, event_types: list[EventType] | None = None
+    ) -> list[SecurityEvent]:
         """
-        Retrieve events from the last N hours.
-        
+        Retrieve events from the last N hours using connection pooling.
+
         Args:
             hours: Number of hours to look back
             event_types: Filter by specific event types
-            
+
         Returns:
             List of SecurityEvent objects
         """
         try:
-            since = datetime.now() - timedelta(hours=hours)
-            
-            query = "SELECT timestamp, event_type, message, metadata, severity FROM events WHERE timestamp >= ?"
-            params = [since]
-            
-            if event_types:
-                placeholders = ','.join('?' * len(event_types))
-                query += f" AND event_type IN ({placeholders})"
-                params.extend([et.value for et in event_types])
-            
-            query += " ORDER BY timestamp ASC"
-            
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(query, params)
+            with self.get_session() as session:
+                since = datetime.now() - timedelta(hours=hours)
+
+                # Build SQLAlchemy query
+                query = session.query(EventModel).filter(EventModel.timestamp >= since)
+
+                # Add event type filter if specified
+                if event_types:
+                    event_type_values = [et.value for et in event_types]
+                    query = query.filter(EventModel.event_type.in_(event_type_values))
+
+                # Order by timestamp
+                query = query.order_by(EventModel.timestamp.asc())
+
+                # Execute query and convert to SecurityEvent objects
                 events = []
-                
-                for row in cursor.fetchall():
-                    timestamp = datetime.fromisoformat(row[0])
-                    event_type = EventType(row[1])
-                    message = row[2]
-                    metadata = json.loads(row[3]) if row[3] else None
-                    severity = row[4]
-                    
-                    events.append(SecurityEvent(
-                        timestamp=timestamp,
-                        event_type=event_type,
-                        message=message,
-                        metadata=metadata,
-                        severity=severity
-                    ))
-                
+                for event_model in query.all():
+                    metadata = (
+                        json.loads(event_model.event_metadata)
+                        if event_model.event_metadata
+                        else None
+                    )
+
+                    events.append(
+                        SecurityEvent(
+                            timestamp=event_model.timestamp,
+                            event_type=EventType(event_model.event_type),
+                            message=event_model.message,
+                            metadata=metadata,
+                            severity=event_model.severity,
+                        )
+                    )
+
                 return events
-                
-        except sqlite3.Error as e:
+
+        except Exception as e:
             self.logger.error(f"Failed to retrieve events: {e}")
             return []
-    
+
     def create_timeline_plot(self, hours: int = 24) -> bytes:
         """
-        Create a timeline plot with three subplots: system status, camera status, and activity detection.
-        
+        Create a simplified 3-panel timeline: system uptime, activity counts, and critical events.
+
         Args:
             hours: Number of hours to include in timeline
-            
+
         Returns:
             PNG image data as bytes
         """
+        # Events are already sorted by timestamp from database query
         events = self.get_events(hours=hours)
-        
+
         # Create time range with adaptive resolution
         end_time = datetime.now()
         start_time = end_time - timedelta(hours=hours)
-        
+
+        # Use configured intervals based on time range
         if hours <= 6:
-            interval_minutes = 2
+            interval_minutes = self.analytics_intervals[0]
         elif hours <= 24:
-            interval_minutes = 10
+            interval_minutes = self.analytics_intervals[1]
         elif hours <= 72:
-            interval_minutes = 30
+            interval_minutes = self.analytics_intervals[2]
         else:
-            interval_minutes = 60
-        
+            interval_minutes = self.analytics_intervals[3]
+
         time_points = []
         current = start_time
         while current <= end_time:
             time_points.append(current)
             current += timedelta(minutes=interval_minutes)
-        
-        # Initialize activity levels
-        motion_activity = [0] * len(time_points)
-        person_activity = [0] * len(time_points)
-        
-        # Process events chronologically for system and camera status
-        events_sorted = sorted(events, key=lambda e: e.timestamp)
-        
-        # Initialize status
-        system_status = [1] * len(time_points)  # 1 = on, 0 = off
-        camera_status = [1] * len(time_points)  # 1 = connected, 0 = disconnected
-        event_idx = 0
-        system_running = True
-        camera_connected = True
-        
-        for i, time_point in enumerate(time_points):
-            # Process all events up to this time point
-            while event_idx < len(events_sorted) and events_sorted[event_idx].timestamp <= time_point:
-                event = events_sorted[event_idx]
-                if event.event_type == EventType.STARTUP:
-                    system_running = True
-                    camera_connected = True
-                elif event.event_type == EventType.SHUTDOWN:
-                    system_running = False
-                    camera_connected = False  # System off implies camera off
-                elif event.event_type == EventType.DISCONNECT:
-                    camera_connected = False
-                elif event.event_type == EventType.RECONNECT:
-                    camera_connected = True
-                event_idx += 1
-            
-            # Set status values - system should reflect actual operational state
-            system_status[i] = 1 if system_running and camera_connected else 0
-            camera_status[i] = 1 if camera_connected else 0
-        
-        # Build activity curves with trend calculation
-        motion_decay_rate = 0.95
-        person_decay_rate = 0.90
-        activity_boost = 20
-        
-        for i, time_point in enumerate(time_points):
-            if i > 0:
-                time_diff = (time_points[i] - time_points[i-1]).total_seconds() / 300
-                motion_activity[i] = motion_activity[i-1] * (motion_decay_rate ** time_diff)
-                person_activity[i] = person_activity[i-1] * (person_decay_rate ** time_diff)
-            
-            window_half = timedelta(minutes=interval_minutes/2)
-            for event in events:
-                if abs((event.timestamp - time_point).total_seconds()) <= window_half.total_seconds():
-                    if event.event_type == EventType.MOTION:
-                        motion_activity[i] = min(100, motion_activity[i] + activity_boost)
-                    elif event.event_type == EventType.PERSON:
-                        person_activity[i] = min(100, person_activity[i] + activity_boost)
-        
-        # Calculate dynamic y-axis limits for activity plot
-        all_activity_values = motion_activity + person_activity
-        max_activity = max(all_activity_values) if all_activity_values and any(x > 0 for x in all_activity_values) else 0
-        
-        if max_activity > 0:
-            activity_y_max = max_activity * 1.15  # 15% headroom
-        else:
-            activity_y_max = 20  # Default range when no activity
-        
-        # Create figure with 3 subplots
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(16, 12), sharex=True)
-        
-        # Define colors
-        colors = {
-            'system': '#4CAF50',      # Green for system
-            'camera': '#FF9800',      # Orange for camera
-            'motion': '#2196F3',      # Blue for motion
-            'person': '#F44336',      # Red for person
-            
-            # Event lines
-            'startup': '#4CAF50',     # Green
-            'shutdown': '#E91E63',    # Pink
-            'disconnect': '#FF9800',  # Orange
-            'reconnect': '#009688',   # Teal
-            'error': '#9C27B0',       # Purple
-            'warning': '#FFC107'      # Amber
-        }
-        
-        # Event mapping
-        event_mapping = {
-            EventType.STARTUP: 'startup',
-            EventType.SHUTDOWN: 'shutdown', 
-            EventType.DISCONNECT: 'disconnect',
-            EventType.RECONNECT: 'reconnect',
-            EventType.ERROR: 'error',
-            EventType.STORAGE_WARNING: 'warning'
-        }
-        
-        event_labels = {
-            EventType.STARTUP: 'START',
-            EventType.SHUTDOWN: 'STOP',
-            EventType.DISCONNECT: 'DISC',
-            EventType.RECONNECT: 'CONN',
-            EventType.ERROR: 'ERR',
-            EventType.STORAGE_WARNING: 'WARN'
-        }
-        
-        # Subplot 1: System Status (On/Off)
-        ax1.step(time_points, system_status, color=colors['system'], linewidth=3, 
-                where='post', alpha=0.8)
-        ax1.fill_between(time_points, system_status, alpha=0.3, color=colors['system'], step='post')
-        ax1.set_ylabel('System Status', fontsize=12)
-        ax1.set_ylim(-0.1, 1.1)
-        ax1.set_yticks([0, 1])
-        ax1.set_yticklabels(['OFF', 'ON'])
-        ax1.grid(True, alpha=0.3)
-        ax1.set_title(f'Security System Timeline - Last {hours} Hours', fontsize=14, weight='bold')
-        
-        # Add event lines to system subplot
+
+        # Initialize counters for each time window
+        motion_counts = [0] * len(time_points)
+        person_counts = [0] * len(time_points)
+
+        # Panel 1: Calculate system uptime by tracking actual state transitions
+        # Build complete state history from events
+        state_changes = []  # List of (timestamp, is_operational)
+
+        # Smart initial state detection:
+        # If we have motion/person events, system must have been operational
+        has_activity = any(e.event_type in [EventType.MOTION, EventType.PERSON] for e in events)
+
+        # Start with intelligent guess based on activity
+        system_running = has_activity  # If there's activity, system was running
+        camera_connected = has_activity
+
         for event in events:
             if event.event_type == EventType.STARTUP:
-                ax1.axvline(x=event.timestamp, color=colors['startup'], linestyle='-', 
-                        linewidth=2, alpha=0.8, zorder=3)
+                system_running = True
+                camera_connected = True
+                state_changes.append((event.timestamp, 1))
             elif event.event_type == EventType.SHUTDOWN:
-                ax1.axvline(x=event.timestamp, color=colors['shutdown'], linestyle='-', 
-                        linewidth=2, alpha=0.8, zorder=3)
-            elif event.event_type in [EventType.ERROR, EventType.STORAGE_WARNING]:
-                color_key = event_mapping[event.event_type]
-                color = colors[color_key]
-                ax1.axvline(x=event.timestamp, color=color, linestyle='-', 
-                        linewidth=2, alpha=0.7, zorder=3)
-        
-        # Subplot 2: Camera Status (Connected/Disconnected)
-        ax2.step(time_points, camera_status, color=colors['camera'], linewidth=3, 
-                where='post', alpha=0.8)
-        ax2.fill_between(time_points, camera_status, alpha=0.3, color=colors['camera'], step='post')
-        ax2.set_ylabel('Camera Status', fontsize=12)
-        ax2.set_ylim(-0.1, 1.1)
-        ax2.set_yticks([0, 1])
-        ax2.set_yticklabels(['DISCONNECTED', 'CONNECTED'])
-        ax2.grid(True, alpha=0.3)
-        
-        # Add connection-related event lines to camera subplot
-        for event in events:
-            if event.event_type in [EventType.ERROR, EventType.STORAGE_WARNING]:
-                color_key = event_mapping[event.event_type]
-                color = colors[color_key]
-                ax2.axvline(x=event.timestamp, color=color, linestyle='-', 
-                        linewidth=2, alpha=0.7, zorder=3)
-        
-        # Subplot 3: Activity Detection (Motion & Person)
-        has_motion = any(x > 0 for x in motion_activity)
-        has_person = any(x > 0 for x in person_activity)
-        
-        if has_motion:
-            ax3.plot(time_points, motion_activity, color=colors['motion'], linewidth=3, 
-                    label='Motion Events', alpha=0.9, zorder=2)
-            ax3.fill_between(time_points, motion_activity, alpha=0.3, 
-                        color=colors['motion'], zorder=1)
-        
-        if has_person:
-            ax3.plot(time_points, person_activity, color=colors['person'], linewidth=3, 
-                    label='Person Events', alpha=0.9, zorder=2)
-            ax3.fill_between(time_points, person_activity, alpha=0.3, 
-                        color=colors['person'], zorder=1)
-        
-        ax3.set_ylabel('Activity Level', fontsize=12)
-        ax3.set_xlabel('Time', fontsize=12)
-        ax3.set_ylim(0, activity_y_max)
-        ax3.grid(True, alpha=0.3)
-        
-        # Add all event lines to activity subplot
-        for event in events:
-            if event.event_type in [EventType.ERROR, EventType.STORAGE_WARNING]:
-                color_key = event_mapping[event.event_type]
-                color = colors[color_key]
-                ax3.axvline(x=event.timestamp, color=color, linestyle='-', 
-                        linewidth=2, alpha=0.7, zorder=3)
-                
-                # Add event labels only for warnings and errors
-                label = event_labels[event.event_type]
-                ax3.text(event.timestamp, activity_y_max * 0.95, label, 
-                        rotation=90, ha='center', va='top', fontsize=9, 
-                        color='white', weight='bold', zorder=5,
-                        bbox=dict(boxstyle='round,pad=0.2', facecolor=color,
-                        alpha=0.9, edgecolor='white', linewidth=1))
-        
-        # Add legend for activity plot
-        if has_motion or has_person:
-            ax3.legend(loc='upper left', fontsize=10, frameon=True, fancybox=True, shadow=True)
-        
-        # Smart x-axis formatting (only for bottom subplot since sharex=True)
-        if hours <= 6:
-            ax3.xaxis.set_major_locator(mdates.HourLocator(interval=1))
-            ax3.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-        elif hours <= 24:
-            ax3.xaxis.set_major_locator(mdates.HourLocator(interval=3))
-            ax3.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-        elif hours <= 168:
-            ax3.xaxis.set_major_locator(mdates.HourLocator(interval=12))
-            ax3.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d %H:%M'))
-        else:
-            ax3.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-            ax3.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-        
-        plt.setp(ax3.xaxis.get_majorticklabels(), rotation=45)
-        
-        # Create legend for event lines
-        legend_elements = []
-        legend_elements.append(plt.Line2D([0], [0], color='black', linewidth=0, label='Events:'))
-        legend_elements.append(plt.Line2D([0], [0], color=colors['warning'], 
-                                        linewidth=2, label='  Warning'))
-        legend_elements.append(plt.Line2D([0], [0], color=colors['error'], 
-                                        linewidth=2, label='  Error'))
-        
-        # Place legend on the right side
-        fig.legend(handles=legend_elements, loc='lower center', bbox_to_anchor=(0.5, -0.05), 
-            ncol=3, fontsize=10, frameon=True, fancybox=True, shadow=True)
+                system_running = False
+                camera_connected = False
+                state_changes.append((event.timestamp, 0))
+            elif event.event_type == EventType.DISCONNECT:
+                camera_connected = False
+                is_operational = 1 if (system_running and camera_connected) else 0
+                state_changes.append((event.timestamp, is_operational))
+            elif event.event_type == EventType.RECONNECT:
+                camera_connected = True
+                is_operational = 1 if (system_running and camera_connected) else 0
+                state_changes.append((event.timestamp, is_operational))
 
-        plt.tight_layout()
-        plt.subplots_adjust(bottom=0.05)
-        
+        # Build operational status array
+        if not state_changes:
+            # No critical events - use activity to determine state
+            system_operational = [1 if has_activity else 0] * len(time_points)
+        else:
+            # Sample the state at each time_point based on state transitions
+            system_operational = []
+
+            # Initial state before first state change
+            current_state = 1 if has_activity else 0
+
+            # Update initial state if there's a state change before start_time
+            for ts, state in state_changes:
+                if ts <= start_time:
+                    current_state = state
+                else:
+                    break
+
+            # Build array by replaying state changes
+            change_idx = 0
+            for time_point in time_points:
+                # Apply all state changes up to this time_point
+                while (
+                    change_idx < len(state_changes) and state_changes[change_idx][0] <= time_point
+                ):
+                    current_state = state_changes[change_idx][1]
+                    change_idx += 1
+                system_operational.append(current_state)
+
+        # Panel 2: Count events in each time window (simple histogram)
+        for event in events:
+            # Find which time window this event belongs to
+            for i in range(len(time_points) - 1):
+                if time_points[i] <= event.timestamp < time_points[i + 1]:
+                    if event.event_type == EventType.MOTION:
+                        motion_counts[i] += 1
+                    elif event.event_type == EventType.PERSON:
+                        person_counts[i] += 1
+                    break
+            else:
+                # Handle last time window
+                if event.timestamp >= time_points[-1]:
+                    if event.event_type == EventType.MOTION:
+                        motion_counts[-1] += 1
+                    elif event.event_type == EventType.PERSON:
+                        person_counts[-1] += 1
+
+        # Panel 3: Collect critical events
+        critical_events = [
+            e
+            for e in events
+            if e.event_type
+            in [
+                EventType.STARTUP,
+                EventType.SHUTDOWN,
+                EventType.DISCONNECT,
+                EventType.RECONNECT,
+                EventType.ERROR,
+                EventType.STORAGE_WARNING,
+            ]
+        ]
+
+        # Calculate max count for y-axis (stacked bar height)
+        combined_counts = [m + p for m, p in zip(motion_counts, person_counts, strict=False)]
+        max_count = max(combined_counts, default=0) if combined_counts else 1
+
+        # Create single unified plot with configured dimensions
+        fig, ax = plt.subplots(figsize=(self.analytics_figure_width, self.analytics_figure_height))
+        fig.subplots_adjust(left=0.05, right=0.98, top=0.92, bottom=0.18)
+
+        # Define colors
+        colors = {
+            "operational": "#4CAF50",  # Green
+            "offline": "#EF5350",  # Red-ish
+            "motion": "#2196F3",  # Blue
+            "person": "#FF9800",  # Orange
+            "startup": "#4CAF50",  # Green
+            "shutdown": "#E91E63",  # Pink
+            "disconnect": "#FF5722",  # Deep Orange
+            "reconnect": "#009688",  # Teal
+            "error": "#9C27B0",  # Purple
+            "warning": "#FFC107",  # Amber
+        }
+
+        event_symbols = {
+            EventType.STARTUP: "▲",
+            EventType.SHUTDOWN: "▼",
+            EventType.DISCONNECT: "⚠",
+            EventType.RECONNECT: "●",
+            EventType.ERROR: "✕",
+            EventType.STORAGE_WARNING: "!",
+        }
+
+        event_colors_map = {
+            EventType.STARTUP: colors["startup"],
+            EventType.SHUTDOWN: colors["shutdown"],
+            EventType.DISCONNECT: colors["disconnect"],
+            EventType.RECONNECT: colors["reconnect"],
+            EventType.ERROR: colors["error"],
+            EventType.STORAGE_WARNING: colors["warning"],
+        }
+
+        # ========================================
+        # Single Unified Plot
+        # ========================================
+
+        # 1. Y-axis scale based on actual max count (with headroom for labels)
+        y_max = max_count * 1.25 if max_count > 0 else 5
+
+        # 2. Precise background coloring (use actual state transitions)
+        if state_changes:
+            # Start with initial state
+            current_state = 1 if has_activity else 0
+            for ts, state in state_changes:
+                if ts <= start_time:
+                    current_state = state
+                else:
+                    break
+
+            # Draw each segment from state change to state change
+            prev_time = start_time
+            for ts, state in state_changes:
+                if ts >= start_time:
+                    # Draw segment with previous state
+                    bg_color = colors["operational"] if current_state == 1 else colors["offline"]
+                    ax.axvspan(prev_time, ts, color=bg_color, alpha=0.15, zorder=1)
+                    prev_time = ts
+                    current_state = state
+
+            # Final segment to end_time
+            bg_color = colors["operational"] if current_state == 1 else colors["offline"]
+            ax.axvspan(prev_time, end_time, color=bg_color, alpha=0.15, zorder=1)
+        else:
+            # No state changes - single color throughout
+            bg_color = colors["operational"] if has_activity else colors["offline"]
+            ax.axvspan(start_time, end_time, color=bg_color, alpha=0.15, zorder=1)
+
+        # 3. Critical event lines (behind bars)
+        for event in critical_events:
+            color = event_colors_map.get(event.event_type, "#666")
+            symbol = event_symbols.get(event.event_type, "●")
+
+            ax.axvline(
+                event.timestamp, color=color, linewidth=1.8, alpha=0.6, linestyle="-", zorder=2
+            )
+            ax.text(
+                event.timestamp,
+                0,
+                symbol,
+                ha="center",
+                va="bottom",
+                fontsize=11,
+                color=color,
+                weight="bold",
+                zorder=10,
+                clip_on=False,
+                bbox={
+                    "boxstyle": "circle,pad=0.15",
+                    "fc": "white",
+                    "ec": color,
+                    "lw": 2,
+                    "alpha": 0.95,
+                },
+            )
+
+        # 4. Detection bars (in front of vlines)
+        width = (time_points[1] - time_points[0]) * 0.6
+
+        ax.bar(
+            time_points,
+            motion_counts,
+            width=width,
+            color=colors["motion"],
+            alpha=0.85,
+            label=f"Motion ({sum(motion_counts)})",
+            edgecolor="white",
+            linewidth=0.5,
+            zorder=3,
+        )
+        ax.bar(
+            time_points,
+            person_counts,
+            width=width,
+            bottom=motion_counts,
+            color=colors["person"],
+            alpha=0.85,
+            label=f"Person ({sum(person_counts)})",
+            edgecolor="white",
+            linewidth=0.5,
+            zorder=3,
+        )
+
+        # 5. Styling
+        ax.set_ylabel("Events", fontsize=13, weight="bold")
+        ax.set_xlim(start_time, end_time)
+        ax.set_ylim(0, y_max)
+        ax.grid(True, alpha=0.2, axis="both", linestyle="--", linewidth=0.7)
+        ax.set_title(f"Security Analytics - Last {hours}h", fontsize=15, weight="bold", pad=10)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        # 6. Comprehensive legend with all symbols
+        leg_items = [
+            Patch(fc=colors["motion"], alpha=0.85, label="Motion"),
+            Patch(fc=colors["person"], alpha=0.85, label="Person"),
+            Patch(fc=colors["operational"], alpha=0.15, label="Online"),
+            Patch(fc=colors["offline"], alpha=0.15, label="Offline"),
+        ]
+
+        # Add all critical event types that appear in data
+        if critical_events:
+            event_types_present = {}
+            for event in critical_events:
+                if event.event_type not in event_types_present:
+                    event_types_present[event.event_type] = event_colors_map.get(
+                        event.event_type, "#666"
+                    )
+
+            for event_type, color in event_types_present.items():
+                symbol = event_symbols.get(event_type, "●")
+                event_name = event_type.value.replace("_", " ").title()
+                leg_items.append(
+                    Patch(fc=color, edgecolor="white", linewidth=2, label=f"{symbol} {event_name}")
+                )
+
+        ax.legend(
+            handles=leg_items,
+            loc="upper left",
+            fontsize=9,
+            framealpha=0.95,
+            edgecolor="#ccc",
+            ncol=min(6, len(leg_items)),
+        )
+
+        # 7. X-axis
+        if hours <= 6:
+            ax.xaxis.set_major_locator(mdates.HourLocator(interval=1))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        elif hours <= 24:
+            ax.xaxis.set_major_locator(mdates.HourLocator(interval=3))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        elif hours <= 168:
+            ax.xaxis.set_major_locator(mdates.HourLocator(interval=12))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d %H:%M"))
+        else:
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+
+        ax.tick_params(axis="both", labelsize=10)
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=0, ha="center")
+
+        # Add summary info if no events at all
         if not events:
-            ax3.text(0.5, 0.5, f'No events in the last {hours} hours', 
-                ha='center', va='center', transform=ax3.transAxes, fontsize=14)
-        
+            fig.text(
+                0.5,
+                0.5,
+                f"No events recorded in the last {hours} hours",
+                ha="center",
+                va="center",
+                fontsize=14,
+                style="italic",
+                color="gray",
+                transform=fig.transFigure,
+                zorder=100,
+            )
+
         # Save to bytes
         buffer = io.BytesIO()
-        plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+        plt.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
         buffer.seek(0)
         image_data = buffer.getvalue()
         plt.close(fig)
-        
+
         return image_data
-    
-    def get_summary_stats(self, hours: int = 24) -> Dict[str, Any]:
+
+    def get_summary_stats(self, hours: int = 24) -> dict[str, Any]:
         """
         Get summary statistics for the specified time period.
-        
+
         Args:
             hours: Number of hours to analyze
-            
+
         Returns:
             Dictionary with statistics
         """
         events = self.get_events(hours=hours)
-        
+
         stats = {
-            'total_events': len(events),
-            'by_type': {},
-            'by_severity': {},
-            'time_period': f'{hours} hours',
-            'first_event': None,
-            'last_event': None
+            "total_events": len(events),
+            "by_type": {},
+            "by_severity": {},
+            "time_period": f"{hours} hours",
+            "first_event": None,
+            "last_event": None,
         }
-        
+
         if events:
-            stats['first_event'] = events[0].timestamp
-            stats['last_event'] = events[-1].timestamp
-            
+            stats["first_event"] = events[0].timestamp
+            stats["last_event"] = events[-1].timestamp
+
             # Count by type
             for event in events:
                 event_type = event.event_type.value
-                stats['by_type'][event_type] = stats['by_type'].get(event_type, 0) + 1
-                
+                stats["by_type"][event_type] = stats["by_type"].get(event_type, 0) + 1
+
                 severity = event.severity
-                stats['by_severity'][severity] = stats['by_severity'].get(severity, 0) + 1
-        
+                stats["by_severity"][severity] = stats["by_severity"].get(severity, 0) + 1
+
         return stats

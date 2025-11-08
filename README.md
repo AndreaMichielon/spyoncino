@@ -14,6 +14,23 @@
 
 > ⚠️ **Alpha Version (0.0.1-alpha)** - This project is under active development. Features may change and bugs may exist.
 
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+    - [Quick Start](#quick-start-recommended)
+    - [GPU Detection Modes](#gpu-detection-modes)
+    - [Launcher Troubleshooting](#launcher-troubleshooting)
+  - [Manual Installation](#manual-installation)
+- [Configuration](#configuration)
+- [Security & Secrets](#security--secrets)
+- [Contributing](#contributing)
+- [License](#license)
+
+
+
 ## Features
 
 - Real-time motion detection with OpenCV background subtraction
@@ -21,13 +38,20 @@
 - Interactive Telegram bot with instant notifications
 - Smart GIF generation with temporal sampling and compression
 - Automatic storage cleanup with configurable retention
-- **Secure multi-user access control with password-based setup**
-- **Encrypted configuration management with separate secrets file**
+- Secure multi-user access control with password-based setup
+- Well-organized YAML configuration with separate secrets file
 
 ## Quick Start
 
+1. **Grab the project** – Clone the repo or download the latest release.
+2. **Have your Telegram bot token ready** – You will add it during setup.
+3. **Run the launcher** – It bootstraps everything for you and starts Spyoncino.
+
+> 💡 The launcher is fully automated. Sit back and watch while it checks Python, sets up UV, creates the environment, installs PyTorch, and launches the app.
+
 ### Prerequisites
-- Python 3.12+, 2GB RAM, 1GB storage
+- Internet connection *(the launcher fetches Python 3.12+ and dependencies automatically if needed)*
+- 2GB RAM, 1GB storage
 - USB webcam or IP camera
 - Telegram bot token from [@BotFather](https://t.me/botfather)
 
@@ -35,175 +59,230 @@
 
 #### Quick Start (Recommended)
 
-Use the automated launcher that handles everything for you:
-
-**Windows:**
+**Windows**
 ```bash
 run.bat
 ```
 
-**Linux/Mac:**
+**Linux/Mac**
 ```bash
 chmod +x run.sh
 ./run.sh
 ```
 
-The launcher will automatically:
-- ✅ Check Python version (3.12+ required)
-- ✅ Install UV package manager if missing
-- ✅ Create virtual environment
-- ✅ Install all dependencies
-- ✅ Run Spyoncino
+When you run the launcher it will:
+- ✅ Check or install Python 3.12+
+- ✅ Install UV if missing and create a virtual environment
+- ✅ Auto-detect your GPU and pull the right PyTorch build
+- ✅ Verify PyTorch and fix mismatches automatically
+- ✅ Install all other dependencies
+- ✅ Launch Spyoncino
 
-#### Manual Installation
+#### GPU Detection Modes
 
-1. **Install PyTorch**
+1. **Automatic (Default)**: Detects NVIDIA GPU and installs correct PyTorch
    ```bash
-   # GPU (recommended)
-   uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-   
-   # CPU only
-   uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+   ./run.sh  # or run.bat
    ```
 
-2. **Install dependencies**
+2. **Force GPU mode**: Install CUDA-enabled PyTorch even if no GPU detected
    ```bash
-   # Create and activate virtual environment
+   export SPYONCINO_PYTORCH=cuda  # Linux/Mac
+   set SPYONCINO_PYTORCH=cuda     # Windows
+   ./run.sh  # or run.bat
+   ```
+
+3. **Force CPU mode**: Install CPU-only PyTorch (smaller, faster install)
+   ```bash
+   export SPYONCINO_PYTORCH=cpu  # Linux/Mac
+   set SPYONCINO_PYTORCH=cpu     # Windows
+   ./run.sh  # or run.bat
+   ```
+
+#### Launcher Troubleshooting
+- Needs one of `curl`/`wget` (Unix) or PowerShell with internet to download UV/Python.
+- If the machine is offline or downloads are blocked, install Python 3.12 manually and rerun.
+- After bootstrapping once, cached UV/Python are reused—delete the virtualenv to force a refresh.
+
+### Manual Installation
+
+0. **Prerequisite**: Make sure Python 3.12+ and the UV package manager are already installed on your system.
+
+1. **Create and activate virtual environment**
+   ```bash
    uv venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+
+2. **Install Spyoncino with PyTorch**
    
-   # Install the package and dependencies
+   **GPU with CUDA:**
+   ```bash
+   uv pip install -e . --index-url https://download.pytorch.org/whl/cu118
+   ```
+   
+   **CPU only:**
+   ```bash
+   uv pip install -e . --index-url https://download.pytorch.org/whl/cpu
+   ```
+   
+   **Standard:**
+   ```bash
    uv pip install -e .
    ```
 
 3. **Configure system**
    
-   Create `config/setting.json` (non-sensitive settings):
-   ```json
-   {
-     "USB_PORT": 0,
-     "CAMERA_WIDTH": 1280,
-     "CAMERA_HEIGHT": 720,
-     "DETECTION_CONFIDENCE": 0.25,
-     "MOTION_THRESHOLD": 5000,
-     "STORAGE_PATH": "recordings",
-     "GIF_FOR_MOTION": false,
-     "GIF_FOR_PERSON": true
-   }
-   ```
+   The configuration files are already created with sensible defaults. You only need to create the secrets file:
    
-   Create `config/secrets.json` from the example template:
    ```bash
-   cp config/secrets.json.example config/secrets.json
+   cp config/secrets.yaml.example config/secrets.yaml
    ```
    
-   Then edit `config/secrets.json` with your sensitive data:
-   ```json
-   {
-     "TELEGRAM_TOKEN": "your_bot_token_here",
-     "CHAT_ID": null,
-     "SETUP_PASSWORD": "YourSecurePassword123!",
-     "SUPERUSER_ID": null,
-     "USER_WHITELIST": []
-   }
+   Edit `config/secrets.yaml` with your Telegram credentials:
+   ```yaml
+   telegram:
+     token: "your_bot_token_here"    # Get from @BotFather
+     chat_id: null                   # Auto-detected from first message
+   
+   authentication:
+     setup_password: "YourSecurePassword123!"  # For /setup command
+     superuser_id: null              # Auto-set during setup
+     user_whitelist: []              # Managed via bot commands
    ```
 
 4. **Secure the secrets file**
    ```bash
-   chmod 600 config/secrets.json  # Restrict file permissions
-   # Note: secrets.json is already in .gitignore
+   chmod 600 config/secrets.yaml
    ```
 
 5. **Run**
    ```bash
-   # Option 1: Automated launcher (recommended)
-   run.bat          # Windows
-   ./run.sh         # Linux/Mac
-   
-   # Option 2: Using the installed command
    spyoncino
-   
-   # Option 3: Direct Python execution
-   python src/spyoncino/run.py config
    ```
 
 ## Security Setup
 
 ### First-Time Configuration
-1. Start the bot: `python src/spyoncino/run.py config`
+1. Start the bot
 2. Message your bot in Telegram
-3. Run `/setup YourSecurePassword123!`
-4. You become the superuser with full admin access
+3. Run `/setup <setup_password>` using the value you set in `config/secrets.yaml` (this makes you the superuser)
 
-### User Management
-- **Superuser**: Full system control, can manage other users
-- **Whitelisted Users**: Basic system access (view recordings, snapshots)
-- **Unauthorized Users**: Blocked with rate limiting
+### User Roles
+- **Superuser**: Full control, manages users
+- **Whitelisted Users**: View recordings, snapshots
+- **Unauthorized**: Blocked with rate limiting
 
 ## Usage
 
-### Essential Commands
+### Telegram Bot Commands
+
+**Before You're Authorized:**
 | Command | Function |
 |---------|----------|
-| `/setup <password>` | First-time superuser setup |
-| `/start` | Initialize system |
+| `/start` | Intro message with next steps |
+| `/help` | Shows limited help and how to request access |
+| `/whoami` | Show your Telegram ID and access status |
+| `/setup <password>` | First-time superuser setup (only before a superuser exists) |
+
+**Essential (Once Authorized):**
+| Command | Function |
+|---------|----------|
 | `/status` | System overview |
 | `/recordings` | Browse with interactive buttons |
 | `/snap` | Live camera snapshot |
 | `/config <key> <value>` | Runtime configuration |
 
-### Configuration Examples
+> ℹ️ **Note:** Not whitelisted yet? Run `/whoami`, copy the ID, and share it with the superuser to get access.
+
+**Configuration Examples:**
 ```
 /config interval 1.5          # Faster detection
 /config confidence 0.15       # More sensitive AI
 /config gif_motion on         # Enable motion GIFs
 ```
 
-### Admin Commands (Superuser Only)
+> 💡 **Tip:** You can also edit `config/config.yaml` directly for permanent changes
+
+**Admin (Superuser Only):**
 - `/whitelist_add <user_id>` - Authorize users
 - `/whitelist_remove <user_id>` - Remove user access  
 - `/whitelist_list` - Show authorized users
 - `/cleanup` - Force file cleanup
 
-### User Info
-- `/whoami` - Show your user ID and authorization status
-
 ## Configuration Files
 
-### config/setting.json (Safe to commit)
+Configuration is split into three YAML files for better organization:
+
+### config/config.yaml (Safe to commit)
+General system settings organized by category:
+
+**Camera Settings:**
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `USB_PORT` | `0` | Camera device index |
-| `INTERVAL` | `2.0` | Detection frequency (seconds) |
-| `DETECTION_CONFIDENCE` | `0.25` | AI sensitivity (0.1-0.9) |
-| `RETENTION_HOURS` | `24` | Recording storage duration |
-| `MOTION_THRESHOLD` | `5000` | Motion detection sensitivity |
+| `usb_port` | `0` | Camera device index |
+| `width` / `height` | `1280x720` | Video resolution |
+| `fps` | `15` | Frames per second |
+| `brightness` / `contrast` | `null` | Optional camera adjustments |
 
-### config/secrets.json (Never commit - already in .gitignore)
+**Detection Settings:**
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `interval` | `2.0` | Detection frequency (seconds) |
+| `confidence` | `0.25` | AI sensitivity (0.1-0.9) |
+| `motion_threshold` | `5` | Motion detection sensitivity |
+| `person_cooldown_seconds` | `30.0` | Cooldown between person detections |
+
+**Storage Settings:**
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `path` | `recordings` | Storage directory |
+| `retention_hours` | `24` | Recording retention duration |
+| `low_space_threshold_gb` | `1.0` | Free space threshold |
+
+**Notification Settings:**
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `gif_for_motion` | `false` | Generate GIF for motion events |
+| `gif_for_person` | `true` | Generate GIF for person events |
+| `gif_fps` | `15` | Internal GIF quality |
+| `notification_gif_fps` | `10` | Telegram GIF quality |
+
+### config/telegram.yaml (Safe to commit)
+Telegram bot and security settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `notification_chat_id` | `null` | Target chat for notifications |
+| `allow_group_commands` | `true` | Enable group chat commands |
+| `silent_unauthorized` | `true` | Silent mode for unauthorized users |
+| `notification_rate_limit` | `5` | Max notifications per minute |
+
+### config/secrets.yaml (Never commit - already in .gitignore)
+Sensitive credentials and authentication:
+
 | Setting | Required | Description |
 |---------|----------|-------------|
-| `TELEGRAM_TOKEN` | Yes | Bot token from @BotFather |
-| `SETUP_PASSWORD` | No | First-time setup password |
-| `CHAT_ID` | No | Auto-detected from first message |
-| `SUPERUSER_ID` | No | Set automatically during setup |
-| `USER_WHITELIST` | No | Managed via bot commands |
+| `telegram.token` | Yes | Bot token from @BotFather |
+| `telegram.chat_id` | No | Auto-detected from first message |
+| `authentication.setup_password` | Recommended | First-time setup password |
+| `authentication.superuser_id` | No | Set automatically during `/setup` |
+| `authentication.user_whitelist` | No | Managed via bot commands |
 
 ## Security Features
 
 ### Multi-layer Protection
 - **Password-based setup**: Prevents unauthorized superuser access
-- **Rate limiting**: Blocks brute force attempts (5 attempts = temporary lockout)
-- **Input sanitization**: Prevents command injection attacks
-- **Separate secrets file**: Sensitive data isolated from main config
+- **Rate limiting**: 5 failed attempts = temporary lockout
+- **Input sanitization**: Prevents command injection
+- **Separate secrets file**: YAML-based isolated sensitive data
 - **User whitelisting**: Granular access control
 
-### Environment Variable Support
-Alternative to `config/secrets.json`:
+**Alternative: Environment Variables**
 ```bash
 export TELEGRAM_BOT_TOKEN="your_token"
 export SECURITY_SETUP_PASSWORD="your_password"
 export TELEGRAM_CHAT_ID="123456789"
-python run.py
 ```
 
 ## Architecture
@@ -225,9 +304,8 @@ Entry Point → Telegram Bot ↔ Event Manager ↔ Security System
 
 **Camera not found:**
 ```bash
-# List available cameras
-ls /dev/video*  # Linux
-# Try USB_PORT values: 0, 1, 2...
+ls /dev/video*  # Linux - list cameras
+# Try USB_PORT: 0, 1, 2...
 ```
 
 **High resource usage:**
@@ -235,49 +313,89 @@ ls /dev/video*  # Linux
 - Reduce camera resolution in settings
 - Lower `MAX_BATCH_SIZE` for GPU memory
 
+**PyTorch/GPU issues:**
+- Check GPU drivers: `nvidia-smi` should show your GPU
+- For manual control: `export SPYONCINO_PYTORCH=cpu` or `=cuda`
+- For CPU-only: `uv pip install -e . --index-url https://download.pytorch.org/whl/cpu`
+- For CUDA: `uv pip install -e . --index-url https://download.pytorch.org/whl/cu118`
+
+**System shows "CPU-only" despite having GPU:**
+1. The launcher auto-fixes this! Just run `run.bat` or `run.sh` again
+2. It will detect the wrong PyTorch version and reinstall with CUDA automatically
+3. Or manually force reinstall:
+   ```bash
+   # Windows
+   set SPYONCINO_PYTORCH=cuda
+   run.bat
+   
+   # Linux/Mac
+   export SPYONCINO_PYTORCH=cuda
+   ./run.sh
+   ```
+
 **Bot unresponsive:**
 - Verify `TELEGRAM_TOKEN` is correct
 - Check internet connectivity
 - Review logs in `recordings/security_system.log`
 
 **Security issues:**
-- Ensure `config/secrets.json` has proper permissions (600)
-- Check that secrets file is in `.gitignore` (already configured)
+- Ensure `config/secrets.yaml` has proper permissions (600)
 - Use strong setup password
 - Monitor failed login attempts in logs
 
-## Deployment Best Practices
+## Deployment
 
-1. **Production Setup:**
-   - Use environment variables instead of `config/secrets.json`
-   - Set up proper file permissions
-   - Configure firewall rules
-   - Enable system logging
+**Production:**
+- Use environment variables for secrets
+- Set file permissions: `chmod 600 config/secrets.yaml`
+- Regularly review logs and user whitelist
 
-2. **Access Control:**
-   - Use strong setup password
-   - Regularly review user whitelist
-   - Monitor authentication logs
-   - Consider using dedicated notification chat
-
-3. **Maintenance:**
-   - Regular log review
-   - Storage cleanup monitoring
-   - Update dependencies periodically
-   - Backup configuration files (excluding secrets)
+**Maintenance:**
+- Monitor storage usage
+- Update dependencies: `uv pip install --upgrade -e .`
+- Backup `config/config.yaml` and `config/telegram.yaml` only (never commit `secrets.yaml`)
 
 ## Technical Details
 
 - **Motion Detection**: Background subtraction with configurable thresholds
-- **Person Recognition**: YOLOv8n with confidence filtering and anti-spam
-- **GIF Optimization**: Temporal importance sampling with 640px max resolution
-- **Storage Management**: Automatic cleanup based on age and disk space
-- **Error Handling**: Comprehensive logging with Unicode-safe formatting
-- **Security**: Rate limiting, input sanitization, encrypted secrets management
+- **Person Recognition**: YOLOv8n with confidence filtering
+- **GIF Optimization**: Temporal importance sampling, 640px max
+- **Storage**: Auto-cleanup based on age and disk space
+- **Analytics**: SQLAlchemy ORM with connection pooling for event tracking
+- **Security**: Rate limiting, input sanitization, encrypted secrets
+- **PyTorch**: Auto-detects GPU, uses optimized index URLs
 
 ## Contributing
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute to this project.
+Contributions are welcome! We have a comprehensive development setup with code quality tools.
+
+### For Contributors
+
+1. **Setup Development Environment:**
+   ```bash
+   # Windows
+   dev\setup_dev.bat
+   
+   # Linux/Mac
+   ./dev/setup_dev.sh
+   
+   # Or using Make
+   make dev-install
+   ```
+
+2. **Setup Guide:** See [dev/SETUP.md](dev/SETUP.md)
+3. **Development Reference:** See [dev/DEVELOPMENT.md](dev/DEVELOPMENT.md)
+4. **Contributing Guidelines:** See [CONTRIBUTING.md](CONTRIBUTING.md)
+
+### Code Quality Tools
+
+- **Ruff** - Lightning-fast linter and formatter
+- **mypy** - Static type checker
+- **pytest** - Testing framework with coverage
+- **pre-commit** - Automated code quality checks
+- **bandit** - Security vulnerability scanner
+
+Pre-commit hooks run automatically on every commit to ensure code quality.
 
 ## License
 

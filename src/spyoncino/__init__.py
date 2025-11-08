@@ -7,20 +7,19 @@ and Telegram notifications.
 
 __version__ = "0.0.1-alpha"
 
+from spyoncino.analytics import EventLogger, EventType, SecurityEvent
+from spyoncino.bot import BotConfig, SecurityTelegramBot
 from spyoncino.capture import Capture
-from spyoncino.security import SecuritySystem
 from spyoncino.manager import SecurityEventManager
-from spyoncino.bot import SecurityTelegramBot, BotConfig
-from spyoncino.analytics import EventLogger, SecurityEvent, EventType
+from spyoncino.security import SecuritySystem
 
 __all__ = [
-    "Capture",
-    "SecuritySystem",
-    "SecurityEventManager",
-    "SecurityTelegramBot",
     "BotConfig",
+    "Capture",
     "EventLogger",
-    "SecurityEvent",
     "EventType",
+    "SecurityEvent",
+    "SecurityEventManager",
+    "SecuritySystem",
+    "SecurityTelegramBot",
 ]
-

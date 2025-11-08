@@ -147,4 +147,3 @@ Be respectful, constructive, and professional. This is a learning and collaborat
 ---
 
 Thank you for contributing to Spyoncino! 🎉
-

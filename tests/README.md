@@ -28,4 +28,3 @@ Please follow these guidelines when writing tests:
 - Include docstrings explaining what is being tested
 - Mock external dependencies (camera, network, etc.)
 - Keep tests isolated and independent
-
