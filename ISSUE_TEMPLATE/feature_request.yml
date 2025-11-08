@@ -1,0 +1,79 @@
+name: Feature request
+description: Suggest an idea that would improve the project.
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for pitching an idea! Sharing the problem you are trying to solve helps us evaluate it faster.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What challenge are you facing right now?
+      placeholder: A clear description of the problem or opportunity.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested solution
+      description: Outline how you would like to see the problem solved. Include screenshots or sketches if helpful.
+      placeholder: What should happen? Are there alternatives?
+    validations:
+      required: true
+  - type: textarea
+    id: benefits
+    attributes:
+      label: Benefits
+      description: Who will this help and how?
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Links, related issues, or other notes.
+    validations:
+      required: false
+name: Feature request
+description: Suggest an idea that would improve the project.
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for pitching an idea! Sharing the problem you are trying to solve helps us evaluate it faster.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What challenge are you facing right now?
+      placeholder: A clear description of the problem or opportunity.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested solution
+      description: Outline how you would like to see the problem solved.
+      placeholder: What should happen? Are there alternatives?
+    validations:
+      required: true
+  - type: textarea
+    id: benefits
+    attributes:
+      label: Benefits
+      description: Who will this help and how?
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Links, mockups, related issues, or other notes.
+    validations:
+      required: false
+
