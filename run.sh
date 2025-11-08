@@ -15,41 +15,84 @@ MIN_PYTHON_VERSION="3.12"
 # Step 1: Check Python version
 # ========================================
 echo "[1/5] Checking Python version..."
-if ! command -v python3 &> /dev/null; then
-    echo "ERROR: Python 3 is not installed or not in PATH!"
-    echo "Please install Python $MIN_PYTHON_VERSION or higher"
-    exit 1
+PYTHON_CMD=""
+NEED_UV_PYTHON=""
+NEED_ONLINE_PYTHON=""
+
+if command -v python3 &> /dev/null; then
+    PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
+    echo "Found Python $PYTHON_VERSION"
+
+    # Extract major and minor version
+    MAJOR=$(echo "$PYTHON_VERSION" | cut -d'.' -f1)
+    MINOR=$(echo "$PYTHON_VERSION" | cut -d'.' -f2)
+
+    if [ "$MAJOR" -gt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -ge 12 ]); then
+        PYTHON_CMD=$(command -v python3)
+        echo "  Python version OK"
+    else
+        echo "  Python $PYTHON_VERSION is below required $MIN_PYTHON_VERSION"
+        NEED_UV_PYTHON=1
+    fi
+else
+    echo "Python 3 is not installed or not in PATH."
+    NEED_UV_PYTHON=1
+    NEED_ONLINE_PYTHON=1
 fi
 
-PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
-echo "Found Python $PYTHON_VERSION"
-
-# Extract major and minor version
-MAJOR=$(echo $PYTHON_VERSION | cut -d'.' -f1)
-MINOR=$(echo $PYTHON_VERSION | cut -d'.' -f2)
-
-if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 12 ]); then
-    echo "ERROR: Python $MIN_PYTHON_VERSION or higher required, found $PYTHON_VERSION"
-    exit 1
+if [ -n "$NEED_UV_PYTHON" ]; then
+    echo "  Will attempt to provision Python $MIN_PYTHON_VERSION with uv."
 fi
-echo "  Python version OK"
 echo
 
 # ========================================
 # Step 2: Check/Install UV
 # ========================================
 echo "[2/5] Checking uv package manager..."
+HAVE_UV=""
 if ! command -v uv &> /dev/null; then
-    echo "UV not found. Installing UV..."
-    pip3 install uv
-    if [ $? -ne 0 ]; then
-        echo "WARNING: Failed to install UV. Will use pip instead."
-        USE_PIP=1
+    if [ -z "$PYTHON_CMD" ]; then
+        echo "UV not found. Downloading UV installer..."
+        INSTALL_SUCCESS=0
+        if command -v curl &> /dev/null; then
+            curl -LsSf https://astral.sh/install.sh | sh
+            INSTALL_SUCCESS=$?
+        elif command -v wget &> /dev/null; then
+            wget -qO- https://astral.sh/install.sh | sh
+            INSTALL_SUCCESS=$?
+        else
+            echo "ERROR: Neither curl nor wget is available to download UV."
+            exit 1
+        fi
+        if [ $INSTALL_SUCCESS -ne 0 ]; then
+            echo "ERROR: Failed to install UV from internet."
+            exit 1
+        fi
+        # Ensure default install location is on PATH
+        if [ -d "$HOME/.local/bin" ] && ! command -v uv &> /dev/null; then
+            export PATH="$HOME/.local/bin:$PATH"
+        fi
+        if command -v uv &> /dev/null; then
+            echo "  UV installed successfully"
+            HAVE_UV=1
+        else
+            echo "ERROR: UV installation completed but executable not found."
+            exit 1
+        fi
     else
-        echo "  UV installed successfully"
+        echo "UV not found. Installing UV..."
+        pip3 install uv
+        if [ $? -ne 0 ]; then
+            echo "WARNING: Failed to install UV. Will use pip instead."
+            USE_PIP=1
+        else
+            echo "  UV installed successfully"
+            HAVE_UV=1
+        fi
     fi
 else
     echo "  UV found"
+    HAVE_UV=1
 fi
 echo
 
@@ -57,12 +100,41 @@ echo
 # Step 3: Create virtual environment
 # ========================================
 echo "[3/5] Setting up virtual environment..."
+
+if [ -n "$NEED_UV_PYTHON" ]; then
+    if [ -n "$HAVE_UV" ]; then
+        if [ -n "$NEED_ONLINE_PYTHON" ]; then
+            echo "  No system Python detected. Downloading Python $MIN_PYTHON_VERSION with uv..."
+        else
+            echo "  Provisioning Python $MIN_PYTHON_VERSION via uv..."
+        fi
+        uv python install $MIN_PYTHON_VERSION
+        if [ $? -ne 0 ]; then
+            echo "ERROR: Failed to install Python $MIN_PYTHON_VERSION with uv"
+            exit 1
+        fi
+        PYTHON_CMD=$(uv python find $MIN_PYTHON_VERSION)
+        if [ -z "$PYTHON_CMD" ]; then
+            echo "ERROR: uv could not locate Python $MIN_PYTHON_VERSION after installation"
+            exit 1
+        fi
+        echo "  Using Python interpreter: $PYTHON_CMD"
+    else
+        echo "ERROR: Python $MIN_PYTHON_VERSION or higher required but uv is unavailable to provision it."
+        exit 1
+    fi
+fi
+
+if [ -z "$PYTHON_CMD" ]; then
+    PYTHON_CMD=$(command -v python3 2>/dev/null || true)
+fi
+
 if [ ! -d "$ENV_PATH" ]; then
     echo "Creating new virtual environment: $ENV_PATH"
     if [ -n "$USE_PIP" ]; then
-        python3 -m venv $ENV_PATH
+        "$PYTHON_CMD" -m venv $ENV_PATH
     else
-        uv venv $ENV_PATH
+        uv venv --python "$PYTHON_CMD" $ENV_PATH
     fi
     if [ $? -ne 0 ]; then
         echo "ERROR: Failed to create virtual environment"
@@ -130,11 +202,11 @@ fi
 
 # Verify PyTorch installation
 echo "Verifying PyTorch installation..."
-python3 -c "import torch; cuda=torch.cuda.is_available(); print(f'  PyTorch {torch.__version__}'); print(f'  CUDA available: {cuda}')" 2>/dev/null
+python -c "import torch; cuda=torch.cuda.is_available(); print(f'  PyTorch {torch.__version__}'); print(f'  CUDA available: {cuda}')" 2>/dev/null
 if [ $? -ne 0 ]; then
     echo "  WARNING: Could not verify PyTorch installation"
 else
-    python3 -c "import torch; exit(0 if torch.cuda.is_available() or '$INDEX_URL' != '--index-url https://download.pytorch.org/whl/cu118' else 1)" 2>/dev/null
+    python -c "import torch; exit(0 if torch.cuda.is_available() or '$INDEX_URL' != '--index-url https://download.pytorch.org/whl/cu118' else 1)" 2>/dev/null
     if [ $? -ne 0 ]; then
         echo "  WARNING: GPU detected but PyTorch has no CUDA support!"
         echo "  This usually means UV cached the CPU version."

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-**First, create your environment using the main run scripts:**
+**First, create your environment using the main run scripts (see the full quick-start flow in the [README](../README.md#quick-start)):**
 
 ### Windows
 ```bash
@@ -47,65 +47,33 @@ pre-commit install
 
 ---
 
-## What Gets Installed
+## What's Included
 
-### Tools
-1. **Ruff** - Fast linter + formatter (replaces black, isort, flake8)
-2. **mypy** - Type checker (catches type errors)
-3. **pytest** - Test runner (works with your existing tests)
-4. **bandit** - Security scanner
-5. **pre-commit** - Runs checks automatically on commit
-
-### Files Added/Modified
-```
-Root directory:
-├── pyproject.toml              ← Tool configurations (REQUIRED)
-├── .pre-commit-config.yaml     ← Pre-commit hooks (REQUIRED)
-├── .gitignore                  ← Updated (REQUIRED)
-├── setup_dev.bat/sh            ← Convenience scripts
-└── Makefile                    ← Command shortcuts
-
-Updated:
-├── .github/workflows/tests.yml ← Now runs quality checks
-└── .vscode/settings.json       ← VS Code integration
-```
+- **Tooling**: Ruff (lint/format), mypy, pytest, bandit, pre-commit
+- **Configs & scripts**:
+  - `pyproject.toml` – shared settings
+  - `.pre-commit-config.yaml` – hook definitions
+  - `.gitignore`, `setup_dev.*`, `Makefile`
+  - `.github/workflows/tests.yml`, `.vscode/settings.json`
 
 ---
 
-## Daily Usage
+## Usage
 
-### Automatic (Recommended)
-Just commit normally - hooks run automatically:
+**Commit flow**
 ```bash
 git add .
 git commit -m "feat: your message"
 ```
+Hooks format, lint, type-check, and run security scans automatically. Fixes are usually applied for you—just restage if needed.
 
-Pre-commit hooks automatically:
-- ✅ Format your code
-- ✅ Fix linting issues
-- ✅ Check types
-- ✅ Scan for security issues
-
-If checks fail, most issues are auto-fixed. Just stage and commit again.
-
-### Manual Commands
+**Manual checks**
 ```bash
-# Fix and format code
 ruff check --fix .
 ruff format .
-
-# Run tests
-pytest
-pytest --cov=spyoncino  # with coverage
-
-# Type check
+pytest            # add --cov=spyoncino for coverage
 mypy src/
-
-# Or use Make shortcuts
-make fix       # Fix + format
-make test      # Run tests
-make check     # Run all checks
+make check        # runs the full suite
 ```
 
 ---
@@ -122,26 +90,12 @@ Settings are already in `.vscode/settings.json` - code will auto-format on save!
 
 ## Troubleshooting
 
-**Pre-commit hooks fail on first run**
-- Normal! First run downloads hooks
-- Most issues are auto-fixed automatically
-
-**"Command not found" errors**
-```bash
-pre-commit clean
-pre-commit install
-```
-
-**Skip hooks in emergency**
-```bash
-git commit --no-verify  # Use sparingly!
-```
-
-**Update tools**
-```bash
-pre-commit autoupdate
-pip install -e ".[dev]" --upgrade
-```
+| Issue | Quick fix |
+|-------|-----------|
+| Hooks fail on first run | Retry the commit; dependencies finish downloading. |
+| `command not found` | `pre-commit clean && pre-commit install` |
+| Need to bypass hooks | `git commit --no-verify` *(avoid unless blocked)* |
+| Update tooling | `pre-commit autoupdate && pip install -e ".[dev]" --upgrade` |
 
 ---
 
@@ -157,7 +111,7 @@ Pre-commit hooks: `.pre-commit-config.yaml` (must stay in root)
 
 ---
 
-## Next: Daily Development
+## Next: Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for:
 - Command reference

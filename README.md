@@ -14,6 +14,23 @@
 
 > ⚠️ **Alpha Version (0.0.1-alpha)** - This project is under active development. Features may change and bugs may exist.
 
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+    - [Quick Start](#quick-start-recommended)
+    - [GPU Detection Modes](#gpu-detection-modes)
+    - [Launcher Troubleshooting](#launcher-troubleshooting)
+  - [Manual Installation](#manual-installation)
+- [Configuration](#configuration)
+- [Security & Secrets](#security--secrets)
+- [Contributing](#contributing)
+- [License](#license)
+
+
+
 ## Features
 
 - Real-time motion detection with OpenCV background subtraction
@@ -21,13 +38,20 @@
 - Interactive Telegram bot with instant notifications
 - Smart GIF generation with temporal sampling and compression
 - Automatic storage cleanup with configurable retention
-- **Secure multi-user access control with password-based setup**
-- **Well-organized YAML configuration with separate secrets file**
+- Secure multi-user access control with password-based setup
+- Well-organized YAML configuration with separate secrets file
 
 ## Quick Start
 
+1. **Grab the project** – Clone the repo or download the latest release.
+2. **Have your Telegram bot token ready** – You will add it during setup.
+3. **Run the launcher** – It bootstraps everything for you and starts Spyoncino.
+
+> 💡 The launcher is fully automated. Sit back and watch while it checks Python, sets up UV, creates the environment, installs PyTorch, and launches the app.
+
 ### Prerequisites
-- Python 3.12+, 2GB RAM, 1GB storage
+- Internet connection *(the launcher fetches Python 3.12+ and dependencies automatically if needed)*
+- 2GB RAM, 1GB storage
 - USB webcam or IP camera
 - Telegram bot token from [@BotFather](https://t.me/botfather)
 
@@ -35,27 +59,26 @@
 
 #### Quick Start (Recommended)
 
-**Windows:**
+**Windows**
 ```bash
 run.bat
 ```
 
-**Linux/Mac:**
+**Linux/Mac**
 ```bash
 chmod +x run.sh
 ./run.sh
 ```
 
-The launcher will automatically:
-- ✅ Check Python version (3.12+ required)
-- ✅ Install UV package manager if missing
-- ✅ Create virtual environment
-- ✅ **Auto-detect GPU and install optimal PyTorch version**
-- ✅ **Verify PyTorch installation and auto-fix if wrong version detected**
-- ✅ Install all dependencies
-- ✅ Run Spyoncino
+When you run the launcher it will:
+- ✅ Check or install Python 3.12+
+- ✅ Install UV if missing and create a virtual environment
+- ✅ Auto-detect your GPU and pull the right PyTorch build
+- ✅ Verify PyTorch and fix mismatches automatically
+- ✅ Install all other dependencies
+- ✅ Launch Spyoncino
 
-**GPU Detection Modes:**
+#### GPU Detection Modes
 
 1. **Automatic (Default)**: Detects NVIDIA GPU and installs correct PyTorch
    ```bash
@@ -76,7 +99,14 @@ The launcher will automatically:
    ./run.sh  # or run.bat
    ```
 
-#### Manual Installation
+#### Launcher Troubleshooting
+- Needs one of `curl`/`wget` (Unix) or PowerShell with internet to download UV/Python.
+- If the machine is offline or downloads are blocked, install Python 3.12 manually and rerun.
+- After bootstrapping once, cached UV/Python are reused—delete the virtualenv to force a refresh.
+
+### Manual Installation
+
+0. **Prerequisite**: Make sure Python 3.12+ and the UV package manager are already installed on your system.
 
 1. **Create and activate virtual environment**
    ```bash
@@ -128,10 +158,6 @@ The launcher will automatically:
 
 5. **Run**
    ```bash
-   run.bat          # Windows
-   ./run.sh         # Linux/Mac
-   
-   # Or directly:
    spyoncino
    ```
 
@@ -140,7 +166,7 @@ The launcher will automatically:
 ### First-Time Configuration
 1. Start the bot
 2. Message your bot in Telegram
-3. Run `/setup YourSecurePassword123!` (you become superuser)
+3. Run `/setup <setup_password>` using the value you set in `config/secrets.yaml` (this makes you the superuser)
 
 ### User Roles
 - **Superuser**: Full control, manages users
@@ -151,15 +177,23 @@ The launcher will automatically:
 
 ### Telegram Bot Commands
 
-**Essential:**
+**Before You're Authorized:**
 | Command | Function |
 |---------|----------|
-| `/setup <password>` | First-time superuser setup |
-| `/start` | Initialize system |
+| `/start` | Intro message with next steps |
+| `/help` | Shows limited help and how to request access |
+| `/whoami` | Show your Telegram ID and access status |
+| `/setup <password>` | First-time superuser setup (only before a superuser exists) |
+
+**Essential (Once Authorized):**
+| Command | Function |
+|---------|----------|
 | `/status` | System overview |
 | `/recordings` | Browse with interactive buttons |
 | `/snap` | Live camera snapshot |
 | `/config <key> <value>` | Runtime configuration |
+
+> ℹ️ **Note:** Not whitelisted yet? Run `/whoami`, copy the ID, and share it with the superuser to get access.
 
 **Configuration Examples:**
 ```
@@ -175,7 +209,6 @@ The launcher will automatically:
 - `/whitelist_remove <user_id>` - Remove user access  
 - `/whitelist_list` - Show authorized users
 - `/cleanup` - Force file cleanup
-- `/whoami` - Show your user ID and status
 
 ## Configuration Files
 
