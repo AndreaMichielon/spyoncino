@@ -1,245 +1,183 @@
 # Modular Architecture Blueprint
 
-## Overview
+## Executive Summary
 
-Spyoncino transitions from monolithic scripts into a modular, event-driven system. Every capability is encapsulated within a module that interacts solely via the central event bus, while the orchestrator coordinates lifecycle, configuration, and health.
+Spyoncino evolves into a modular, event-driven surveillance platform. The system favors incremental delivery, strong contracts, and operational visibility so new capabilities can be added with minimal coupling. Phase 1 delivers a fully working baseline; later phases layer advanced processing, scalability, and distributed options without rewriting the core.
+
+## Architecture Principles
+
+- **Do:** start with an in-memory `asyncio` bus, keep modules single-responsibility, type everything with Pydantic, prioritize observability (structlog, Prometheus), validate configuration before use, and design for graceful degradation.
+- **Avoid:** over-engineering transport early (request/response, distributed tracing), blocking or synchronous code paths, bespoke infrastructure where solid libraries exist, and releasing modules without health checks or documentation.
+
+## System Structure
 
 ```
 src/spyoncino/
 ├── core/
-│   ├── bus.py
-│   ├── config.py
-│   ├── contracts.py
-│   └── orchestrator.py
-└── modules/
-    ├── input/
-    ├── process/
-    ├── event/
-    ├── output/
-    ├── dashboard/
-    ├── storage/
-    ├── analytics/
-    └── status/
+│   ├── bus.py          # Async pub/sub (baseline) + telemetry hooks
+│   ├── contracts.py    # Module ABCs, payload schemas, validation helpers
+│   ├── config.py       # Dynaconf-backed config, sanitization, rollback
+│   └── orchestrator.py # Lifecycle, wiring, health, reconfiguration
+├── modules/
+│   ├── input/          # Cameras (USB, RTSP, file replay)
+│   ├── process/        # Detectors (motion, YOLO, zoning)
+│   ├── event/          # Media builders (snapshot, GIF, clip)
+│   ├── output/         # Notifiers (Telegram, email, webhook)
+│   ├── storage/        # Persistence (local, S3, DB)
+│   ├── analytics/      # Aggregations, dashboards
+│   └── dashboard/      # CLI, REST, WebSocket control surfaces
+├── schemas/            # Shared Pydantic models and JSON Schema exports
+├── tests/              # Unit, contract, integration, load suites
+├── config/             # Environment-specific YAML + secrets templates
+└── docker/             # Containerization and deployment assets
 ```
-
-**Event Flow (end-to-end)**
-
-1. `camera.{id}.frames` — inputs publish raw `FrameBatch`; processors subscribe as needed.
-2. `process.motion` / `process.detected` — processing modules emit motion/detection events for media, notification, and storage consumers.
-3. `event.media.ready` — media builders publish artifacts that outputs and storage modules consume.
-4. `notify.{channel}` — notification modules fan alerts to external systems.
-5. `storage.recorded` / `storage.indexed` — storage modules acknowledge persistence so analytics/dashboards can react.
-6. `analytics.*` — analytics publish aggregations or query results consumed by dashboards/orchestrator.
-7. `dashboard.{channel}.commands` — dashboards send commands/config changes that the orchestrator/config service handle.
-8. `status.report` / `status.heartbeat` — status modules and orchestrator share health signals for analytics/dashboards.
-9. `config.snapshot` / `config.update` — config service broadcasts snapshots and accepted updates for modules to refresh.
-
-**Topic Access Matrix**
-
-| Module | Publishes | Subscribes |
-|--------|-----------|------------|
-| Input (`modules/input/`) | `camera.*` | – |
-| Processing (`modules/process/`) | `process.*` | `camera.*` |
-| Event (`modules/event/`) | `event.*` | `process.*` |
-| Output (`modules/output/`) | `notify.*` | `event.*`, `process.*` |
-| Storage (`modules/storage/`) | `storage.*` | `event.*`, `process.*` |
-| Analytics (`modules/analytics/`) | `analytics.*` | `storage.*`, `status.*` |
-| Dashboard (`modules/dashboard/`) | `dashboard.*` | `dashboard.*`, `config.*`, `analytics.*` |
-| Status (`modules/status/`) | `status.*` | `status.*`, `analytics.*` |
-| Orchestrator (`core/orchestrator.py`) | `config.snapshot`, `status.heartbeat` | `dashboard.*`, `config.update`, `status.*` |
-
-The orchestrator and modules never talk directly—each module only needs to know which topics it publishes and which ones it listens to. Adding a new capability means choosing the relevant topic(s) and wiring it into the event flow above.
 
 ## Core Layer
 
 ### Event Bus (`core/bus.py`)
-- **Responsibilities:** Topic-based publish/subscribe, request/response, backpressure management, message tracing.
-- **Interfaces:**
-  - `subscribe(topic: str, handler: Callable, *, filter: Optional[Callable]) -> SubscriptionHandle`
-  - `publish(topic: str, payload: BaseModel, *, metadata: Optional[dict])`
-  - `request(topic: str, payload: BaseModel, *, timeout: Optional[float]) -> BaseModel`
-  - `unsubscribe(handle: SubscriptionHandle)`
-- **Implementation Notes:**
-  - Default adapter: in-memory `asyncio.Queue` per subscription (bounded, configurable).
-  - Hook points for alternative transports (Redis, NATS) via `BusAdapter` protocol.
-  - Emit `BusEvent` telemetry (publish, delivery, failure) for logging/metrics.
+- **Baseline:** async publish/subscribe with bounded queues, simple topic filters, structured telemetry, and periodic `status.bus` snapshots (queue depth, lag, subscriber counts).
+- **Future Enhancements:** optional request/response with timeouts, correlation IDs, and alternate transports (`BusAdapter` protocol for Redis/NATS).
+- **Status & Backpressure:** high-watermark warnings publish `BusStatus` events; mitigation strategies (drop oldest, pause publisher) are configurable.
 
 ### Contracts (`core/contracts.py`)
-- **Module ABCs:** `BaseModule`, `InputModule`, `ProcessingModule`, `EventModule`, `OutputModule`, `DashboardModule`, `StorageModule`, `AnalyticsModule`, `StatusModule`.
-- **Lifecycle Hooks:** `configure(config: ModuleConfig)`, `start(bus: EventBus)`, `stop()`, `health() -> StatusReport`, optional `handle_request`.
-- **Payload Schemas (Pydantic):**
-  - `FrameBatch`, `DetectionEvent`, `MotionEvent`
-  - `MediaArtifact` (`kind: gif|mp4|snapshot`, `path`, `metadata`)
-  - `AlertNotification`, `DashboardCommand`, `DashboardResponse`
-  - `StorageRecord`, `StorageRequest`
-  - `AnalyticsQuery`, `AnalyticsResult`
-  - `ConfigUpdate`, `ConfigSnapshot`
-  - `StatusReport`, `Heartbeat`
-- **Topic Conventions:** `camera.{camera_id}.frames`, `process.detected`, `event.media.ready`, `notify.{channel}`, `dashboard.{channel}.commands`, `config.update`, `config.snapshot`, `status.report`.
+- **Module Interfaces:** `BaseModule` and category-specific ABCs defining `configure`, `start`, `stop`, `health`, and optional `handle_request`.
+- **Payload Schemas:** canonical models (`FrameBatch`, `DetectionEvent`, `MediaArtifact`, `AlertNotification`, `ConfigUpdate`, `StatusReport`, etc.) with runtime validation and JSON Schema generation.
+- **Schema Evolution:** every payload carries `schema_version`; additive changes use tolerant parsing (`extra="allow"`). Breaking changes require new topics (e.g. `process.detected.v2`) with orchestrator-managed adapters and deprecation warnings on `status.contract`.
+- **Contract Tests:** reusable fixtures ensure third-party modules satisfy ABCs, schemas, and topic expectations before integration.
 
 ### Configuration Service (`core/config.py`)
-- **Responsibilities:** Load `config.yaml`, expose typed accessors, persist updates, broadcast `ConfigUpdate` events.
-- **Features:**
-  - Pydantic models mirroring modular layout (`input`, `process`, `event`, `output`, `dashboard`, `storage`, `analytics`, `status`).
-  - Versioning for optimistic concurrency; dashboards submit updates via bus.
-  - Change propagation: orchestrator receives updates and calls `module.configure`.
+- **Dynaconf Backbone:** layered config (`config/default.yaml`, environment overrides, environment variables, `.env` for local dev).
+- **Sanitization & Validation:** pre-apply normalization, type coercion, and policy checks; rejected updates emit `ConfigRejected` and log to `status.contract`.
+- **Transactional Rollback:** on partial failure, restore the last snapshot, emit `config.rollback` with diagnostics, and notify orchestrator.
+- **Hot Reload:** accepted updates broadcast `config.snapshot` for subscribed modules to refresh in place.
 
 ### Orchestrator (`core/orchestrator.py`)
-- **Responsibilities:** Module discovery, instantiation, dependency wiring, lifecycle control, health aggregation.
-- **Workflow:**
-  1. Load config snapshot from `core/config.py`.
-  2. Build module registry using entry points or factory map.
-  3. For each module definition in config, instantiate, configure, and register subscriptions.
-  4. Monitor module health via periodic `health()` calls and `status` topics.
-  5. Handle config updates by diffing and reconfiguring affected modules.
-  6. Provide graceful shutdown and selective restarts.
-- **Extension Points:** Module factory registration, bus adapters, health reporters.
+- **Lifecycle:** discover modules, load configuration, instantiate, register subscriptions, and coordinate start/stop with graceful shutdown.
+- **Reconfiguration:** compute per-module diffs; `configure` is idempotent. Failures trigger rollback, `status.contract` alerts, and optional module quarantine.
+- **Health Aggregation:** poll `health()` hooks, subscribe to `status.*`, and expose unified health summaries for dashboards and readiness probes.
+- **Extensibility:** supports custom module factories, alternate bus adapters, and health reporters without cross-module coupling.
+
+## Event Flow & Topic Conventions
+
+- **Naming:** `<domain>.<entity>[.<action>]` (e.g., `camera.front_door.frame`, `process.motion.detected`, `event.media.ready`, `notify.telegram.sent`, `status.bus`).
+- **Standard Detection Flow:** `camera.{id}.frame → process.motion.detected → event.snapshot.ready → notify.telegram.queued → notify.telegram.sent`, with optional branching into storage and analytics.
+- **Health Flow:** `module.*.health → status.report → analytics.health.summary → dashboard.commands` for operator response.
+- **Rules:** modules communicate only via the bus, assume async fire-and-forget semantics, handle missing subscribers gracefully, and design idempotent handlers for replay tolerance.
 
 ## Module Categories
 
-### Input Modules (`modules/input/`)
-- **Purpose:** Acquire frames or media segments from cameras or files.
-- **Examples:** `usb_camera.py`, `rtsp_camera.py`, `http_stream.py`, `file_replay.py`.
-- **Config Section:** `input:` includes camera list with credentials, resolution, fps, retry policies.
-- **Outputs:** `FrameBatch` on `camera.{id}.frames`, optional `StatusReport` for connectivity.
-- **Tests:** Mock device streams, ensure reconnect logic, configuration parsing.
+- **Input (`modules/input/`):** acquire frames or streams; publish `camera.{id}.frame`; manage reconnect, FPS, and device health.
+- **Processing (`modules/process/`):** analyze frames (`process.motion`, `process.detected`); support GPU batching and zoning logic.
+- **Event (`modules/event/`):** build artifacts (`event.media.ready`); optimize encoding, manage retention metadata.
+- **Output (`modules/output/`):** deliver alerts (`notify.{channel}`); enforce rate limiting, retries, and delivery confirmations.
+- **Storage (`modules/storage/`):** persist artifacts/events; publish `storage.*` acknowledgments and index updates.
+- **Analytics (`modules/analytics/`):** aggregate detections/storage into `analytics.*` snapshots and respond to queries.
+- **Dashboard (`modules/dashboard/`):** expose CLIs/APIs; publish `dashboard.*.commands`, submit `config.update` requests, and consume status feeds.
+- **Status (`modules/status/`):** optional aggregation of heartbeats and escalations for observability pipelines.
 
-### Processing Modules (`modules/process/`)
-- **Purpose:** Analyze frames for motion, detection, classification, enrichment.
-- **Examples:** `motion_detector.py`, `yolo_detector.py`.
-- **Config:** `process:` with detection thresholds, model paths, batching, GPU options.
-- **Inputs:** `camera.{id}.frames`; **Outputs:** `DetectionEvent`, `MotionEvent`.
-- **Tests:** Detection pipelines with synthetic frames, threshold behavior, error propagation.
+## Configuration Strategy
 
-### Event Modules (`modules/event/`)
-- **Purpose:** Convert detection results into media artifacts and summaries.
-- **Examples:** `gif_builder.py`, `mp4_encoder.py`, `snapshot_generator.py`.
-- **Config:** `event:` controlling media formats, durations, storage paths, ffmpeg options.
-- **Inputs:** `DetectionEvent`; **Outputs:** `MediaArtifact` on `event.media.ready`.
-- **Tests:** Ensure GIF/MP4/snapshot generation, format choice, fallback handling.
+- **Hierarchy:** default YAML → environment-specific YAML → environment variables → secrets store (`.env`, Docker secrets). Validate presence of required secrets at startup.
+- **Schemas:** each module ships a Pydantic config model used by `configure` to apply defaults, normalize units, and enforce limits.
+- **Update Workflow:** dashboards or APIs publish `config.update`; config service validates, persists (with versioning), broadcasts `config.snapshot`, or emits `ConfigRejected` on failure.
 
-### Output Modules (`modules/output/`)
-- **Purpose:** Deliver alerts and artifacts to external channels.
-- **Examples:** `telegram_notifier.py`, `email_notifier.py`, `webhook_notifier.py`.
-- **Config:** `output:` per-channel settings, rate limits, recipients.
-- **Inputs:** `AlertNotification`, `MediaArtifact`; may emit `DeliveryStatus`.
-- **Tests:** Channel mocks, throttling, error retry.
+## Implementation Roadmap (8 Weeks)
 
-### Dashboard Modules (`modules/dashboard/`)
-- **Purpose:** Provide control surfaces (CLI, Telegram bot, web UI).
-- **Examples:** `telegram_commands.py`, `terminal_cli.py`, `flask_dashboard.py`.
-- **Config:** `dashboard:` channel-specific authentication, commands exposure.
-- **Inputs:** `dashboard.{channel}.commands`; **Outputs:** `DashboardResponse`, `ConfigUpdate` requests.
-- **Tests:** Command parsing, permission checks, config update flows.
+1. **Phase 1 – Core Foundation (Weeks 1-2):** baseline bus, module lifecycle, Dynaconf config, structlog logging, USB input, motion detector, local snapshots, Telegram notifier. *Success:* motion detected and alert sent.
+2. **Phase 2 – Essential Modules (Weeks 3-4):** RTSP input, YOLO detection, GIF media, event deduplication, rate limiting, health monitoring, Prometheus metrics. *Success:* multi-camera object detection with metrics.
+3. **Phase 3 – Enhanced Processing (Weeks 5-6):** zoning, video clip generation, multiple notification channels, FastAPI control API, configuration hot reload, Docker packaging. *Success:* zone-aware detection controllable via API.
+4. **Phase 4 – Production Hardening (Weeks 7-8):** WebSocket updates, S3 storage, database event logging, graceful shutdown, systemd integration, full documentation. *Success:* production-ready deployment with monitoring.
+5. **Phase 5 – Post-MVP Enhancements:** (as needed) Redis/NATS bus adapter, horizontal scaling, ML hot swapping, analytics extensions, multi-tenancy.
 
-### Storage Modules (`modules/storage/`)
-- **Purpose:** Persist media, events, metadata.
-- **Examples:** `local_disk.py`, `s3_storage.py`, `db_writer.py`.
-- **Config:** `storage:` retention policies, paths, bucket info.
-- **Inputs:** `MediaArtifact`, `DetectionEvent`; **Outputs:** `StorageRecord`, retrieval responses.
-- **Tests:** Persistence, retention enforcement, failure recovery.
+## Execution Plan
 
-### Analytics Modules (`modules/analytics/`)
-- **Purpose:** Provide reports, dashboards, aggregated metrics.
-- **Config:** `analytics:` query windows, aggregation intervals.
-- **Inputs:** `StorageRecord`, `DetectionEvent`; **Outputs:** `AnalyticsResult`, `AnalyticsSnapshot`.
-- **Tests:** Query accuracy, performance, schema migrations.
+### Workstreams per Phase
 
-### Status Modules (`modules/status/`)
-- **Purpose:** Optional dedicated status aggregation and heartbeat management.
-- **Config:** `status:` heartbeat intervals, alert thresholds.
-- **Inputs:** `StatusReport`; **Outputs:** consolidated `SystemStatus`, escalations.
-- **Tests:** Aggregation logic, alert triggers.
+| Phase | Core Platform | Modules & Features | Operations & QA |
+|-------|---------------|--------------------|-----------------|
+| 1 | Implement bus MVP, contracts, orchestrator skeleton | USB camera, motion detector, snapshot writer, Telegram notifier | Dynaconf config baseline, structlog setup, unit tests |
+| 2 | Add bus telemetry, health aggregation hooks | RTSP input, YOLO detector, GIF media, dedupe, rate limiting | Prometheus metrics, health endpoints, integration smoke tests |
+| 3 | Config hot-reload, schema version helpers | Zoning logic, clip generator, multi-channel notifier, FastAPI API | Docker build, contract test suite, load-test harness |
+| 4 | Graceful shutdown, rollback automation, status aggregation | S3 storage, DB logging, WebSocket dashboard | systemd packaging, runbooks, HA validation, documentation |
 
-## Configuration Schema
+### Iteration Breakdown (Weekly)
 
-```yaml
-input:
-  cameras:
-    - id: "front-door"
-      type: "rtsp"
-      url: "rtsp://..."
-      fps: 15
-      resolution: "1280x720"
-      retry:
-        backoff: 2.0
-        max_retries: 5
-process:
-  motion_detector:
-    enabled: true
-    sensitivity: medium
-  yolo_detector:
-    model: "weights/yolov8n.pt"
-    confidence: 0.4
-event:
-  formats:
-    gif:
-      enabled: true
-      duration: 3
-    mp4:
-      enabled: true
-      duration: 10
-    snapshot:
-      enabled: true
-output:
-  telegram:
-    chat_id: 123456
-    rate_limit: 30
-  email:
-    smtp_server: smtp.example.com
-    recipients:
-      - user@example.com
-dashboard:
-  telegram:
-    token_ref: "secrets.telegram.bot_token"
-  flask:
-    host: 0.0.0.0
-    port: 8080
-storage:
-  type: local
-  path: "recordings/"
-analytics:
-  refresh_interval: 300
-status:
-  heartbeat_interval: 30
-```
+| Week | Focus | Key Deliverables | Reminders & References |
+|------|-------|------------------|------------------------|
+| 1 | Core scaffolding | Contracts & schemas, bus/orchestrator skeleton, baseline unit tests, sample frame→motion module | Checklist 1-4; Appendix A (bus behavior) |
+| 2 | Baseline features | Dynaconf wiring, snapshot persistence, Telegram notifier, CI for lint/type/unit | Checklist 3-4, 8; Governance quality gate |
+| 3 | Telemetry expansion | `status.bus` telemetry, RTSP input, YOLO pipeline, GIF builder, Prometheus exporters draft | Checklist 2, 5, 6; Appendix A status reporting |
+| 4 | Reliability hardening | Event dedupe, rate limiting, health aggregation, dual-camera integration tests, ops dashboard docs | Checklist 4, 7, 8; Governance demo |
+| 5 | Advanced processing | Zoning, clip generation, FastAPI control API, config hot reload, contract fixtures | Checklist 3, 5, 8; Appendix A backpressure |
+| 6 | Packaging & load | Docker + compose env, load tests, multi-channel notifier support, documentation refresh | Checklist 5-8; Implementation Status “Media pipeline”, “Test suites” |
+| 7 | Persistence & resilience | S3 storage, database logging, WebSocket updates, graceful shutdown + rollback drills | Checklist 6-7, 9; Appendix B migration |
+| 8 | Production launch | systemd unit, production hardening checklist, HA validation, runbooks, exec sign-off | Checklist 7-9; Governance change management |
 
-Each module reads only its section; updates propagate through `ConfigUpdate` messages. Dashboards publish updates; config service validates, persists, and broadcasts snapshots.
+### Governance & Checkpoints
+
+- **Design Reviews:** lightweight review at start of each phase to validate scope and dependencies.
+- **Quality Gates:** no phase closure without passing unit/contract/integration suites and updated documentation.
+- **Change Management:** config updates use feature flags until validated in staging; rollback tested monthly.
+- **Stakeholder Demos:** end-of-phase demo to showcase new capabilities and collect feedback for next iteration.
 
 ## Testing Strategy
 
-- **Unit Tests:** Each module directory contains targeted tests verifying configuration parsing, bus interactions, and core logic.
-- **Bus Tests:** Validate subscription routing, backpressure handling, error propagation.
-- **Orchestrator Tests:** Lifecycle (start/stop), config update handling, health aggregation, module restarts.
-- **Integration Tests:** Scenario coverage (single camera, dual camera, multiple outputs), config mutation via dashboards, media generation workflows.
+- **Unit Tests (`tests/unit/`):** isolate module logic, mock external dependencies, ensure fast execution.
+- **Contract Tests (`tests/contracts/`):** validate module ABC compliance, payload schemas, topic usage, and configuration parsing for first-party and partner modules.
+- **Integration Tests (`tests/integration/`):** exercise end-to-end flows with real bus and media pipelines, covering config mutations and failure modes.
+- **Load Tests (`tests/load/`):** stress inputs, detect bottlenecks, measure memory/CPU, and validate backpressure.
+- **Coverage & Quality:** target ≥80% coverage, include happy/error paths, enforce linting, type checking (`mypy`), and pre-commit hooks.
 
-## Documentation Updates
+## Observability & Operations
 
-- `README.md`: Update architecture overview, configuration instructions, extending modules, multi-channel setup.
-- `docs/architecture/modular_architecture.md` (this file): Living blueprint, to be kept in sync with implementation.
-- Module-specific READMEs (optional): Document extension points and usage.
+- **Metrics:** Prometheus exports for bus throughput, queue depths, per-module latency, detection accuracy, resource usage, and camera availability.
+- **Logging:** structlog JSON in production, correlation IDs propagated via bus metadata, standardized levels (DEBUG/INFO/WARN/ERROR), automatic exception capture.
+- **Health Checks:** `/health/live`, `/health/ready`, module-specific endpoints, and `status.bus` / `status.report` topics feeding dashboards.
+- **Security & Deployment:** run as non-root, enforce TLS for external channels, rate-limit APIs, manage secrets securely, package via Docker/Compose with systemd service definitions.
+
+## Tooling & Dependencies
+
+- **Runtime:** Python 3.11+, asyncio, Pydantic v2, Dynaconf, structlog, Prometheus client, FastAPI, Uvicorn.
+- **Computer Vision:** OpenCV, ultralytics, Pillow, ffmpeg-python.
+- **Integration:** aiohttp, aiogram, aiosmtplib, aioboto3, aiofiles.
+- **Development:** pytest (+asyncio, coverage), mypy, black, pre-commit, Docker 24+.
 
 ## Implementation Checklist
 
-1. Implement `core/contracts.py` with ABCs and Pydantic payloads.
-2. Build `core/bus.py` with `asyncio` adapter and telemetry hooks.
-3. Create `core/config.py` with modular schema and update propagation.
-4. Implement `core/orchestrator.py` handling lifecycle + health.
-5. Extract existing logic into module wrappers (input, process, event, output, dashboard, storage, analytics).
-6. Implement media pipeline enhancements for MP4/GIF/snapshot.
-7. Add status aggregation (via orchestrator or dedicated module).
-8. Write unit/integration tests per module and core components.
-9. Update README and docs to reflect new architecture and configuration.
-10. Provide migration guide for contributors.
+1. Implement `core/contracts.py` with ABCs, payload schemas, version helpers.
+2. Deliver `core/bus.py` baseline with telemetry and `status.bus`.
+3. Build `core/config.py` (Dynaconf, validation, rollback, snapshot broadcasting).
+4. Implement `core/orchestrator.py` lifecycle, health aggregation, rollback hooks.
+5. Extract existing logic into module directories aligned with contracts.
+6. Ship initial media pipeline (snapshot/GIF) and storage alignment.
+7. Provide status aggregation (orchestrator or dedicated module).
+8. Stand up testing layers (unit, contract, integration, load) and CI automation.
+9. Update README + docs, publish migration guide, and seed dashboard UX.
 
-## Extension Guidance
+## Implementation Status Matrix
 
-- **Adding a Module:** Implement the appropriate ABC, declare config schema, register factory, subscribe/publish via bus topics.
-- **New Media Format:** Extend `MediaArtifact` to include format metadata; add transformer module.
-- **Alternative Bus Adapter:** Implement `BusAdapter` protocol, update orchestrator configuration.
-- **Custom Dashboard:** Implement `DashboardModule`, define command handlers, integrate config update flow.
+| Item | Status | Owner | Notes |
+|------|--------|-------|-------|
+| Contracts ABCs & schemas | Planned | – | Define version helpers and shared validators. |
+| Event bus adapter + telemetry | Planned | – | Baseline bus with `status.bus`; adapters follow in Phase 5. |
+| Config service with rollback | Planned | – | Wire sanitization, rejection events, snapshot broadcast. |
+| Orchestrator lifecycle | Planned | – | Ensure idempotent configure and rollback hooks. |
+| Module extractions | Planned | – | Track progress per module category. |
+| Media pipeline enhancements | Planned | – | Align formats and metadata with storage contracts. |
+| Status aggregation module | Planned | – | Decide orchestrator vs dedicated module in Phase 2. |
+| Test suites (unit/contract/integration/load) | Planned | – | Publish reusable fixtures and CI jobs. |
+| Observability stack | Planned | – | structlog, Prometheus, and health endpoints baseline by Phase 2. |
+| Documentation & migration guide | Planned | – | Keep README/docs in sync with releases. |
 
----
+## Appendix A: Event Bus Guidance
 
-Maintain this document as the authoritative source on module responsibilities, interfaces, and supporting infrastructure. Update alongside code changes to keep contributors aligned.
+- **Baseline Behavior:** fire-and-forget publish/subscribe with best-effort delivery and bounded queues; modules treat metadata IDs as optional.
+- **Status Reporting:** periodic `status.bus` events include queue depth, in-flight counts, and latency samples; on timeout or overflow the bus emits `BusStatus` alerts.
+- **Backpressure:** queue watermarks trigger mitigation actions and warnings; publishers may shed load or slow capture based on policy.
+- **Extending Transports:** alternate adapters implement the `BusAdapter` protocol, expose identical telemetry, and honor cancellation signals before being approved for production.
 
+## Appendix B: Migration Strategy
+
+- **Parallel Run:** operate new modular stack alongside legacy scripts until metrics match.
+- **Gradual Cutover:** migrate cameras and notification channels incrementally with rollback ready.
+- **Compatibility Layer:** support legacy configuration ingestion, maintain existing webhook and Telegram semantics, and preserve file naming conventions.
