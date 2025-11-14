@@ -105,7 +105,7 @@ src/spyoncino/
 | Week | Focus | Key Deliverables | Reminders & References |
 |------|-------|------------------|------------------------|
 | ✅ 1 | Core scaffolding | Contracts & schemas, bus/orchestrator skeleton, baseline unit tests, sample frame→motion module | Delivered Nov 14: `core.bus`, `core.contracts`, `core.orchestrator`, `modules.input.camera_sim`, `modules.process.motion_detector`, unit tests |
-| 2 | Baseline features | Dynaconf wiring, snapshot persistence, Telegram notifier, CI for lint/type/unit | Checklist 3-4, 8; Governance quality gate |
+| ✅ 2 | Baseline features | Dynaconf wiring, snapshot persistence, Telegram notifier, CI for lint/type/unit | Checklist 3-4, 8; Governance quality gate |
 | 3 | Telemetry expansion | `status.bus` telemetry, RTSP input, YOLO pipeline, GIF builder, Prometheus exporters draft | Checklist 2, 5, 6; Appendix A status reporting |
 | 4 | Reliability hardening | Event dedupe, rate limiting, health aggregation, dual-camera integration tests, ops dashboard docs | Checklist 4, 7, 8; Governance demo |
 | 5 | Advanced processing | Zoning, clip generation, FastAPI control API, config hot reload, contract fixtures | Checklist 3, 5, 8; Appendix A backpressure |
@@ -146,7 +146,7 @@ src/spyoncino/
 
 1. ✅ Implement `core/contracts.py` with ABCs, payload schemas, version helpers.
 2. ✅ Deliver `core/bus.py` baseline with telemetry and `status.bus`.
-3. ⏳ Build `core/config.py` (Dynaconf, validation, rollback, snapshot broadcasting).
+3. ✅ Build `core/config.py` (Dynaconf, validation, rollback, snapshot broadcasting).
 4. ✅ Implement `core/orchestrator.py` lifecycle, health aggregation, rollback hooks.
 5. ✅ Extract existing logic into module directories aligned with contracts (legacy shims + new `modules/` skeleton).
 6. ⏳ Ship initial media pipeline (snapshot/GIF) and storage alignment.
@@ -163,7 +163,7 @@ src/spyoncino/
 | Config service with rollback | ⏳ In progress | – | Next task: port Dynaconf service and validation. |
 | Orchestrator lifecycle | ✅ Complete | – | `core/orchestrator.py` manages bus + module lifecycle basics. |
 | Module extractions | ⏳ In progress | – | Legacy code moved under `spyoncino.legacy`, initial modular input/process modules live under `modules/`. |
-| Media pipeline enhancements | Planned | – | Pending extraction of snapshot/GIF builders. |
+| Media pipeline enhancements | ⏳ In progress | – | Snapshot writer shipped; GIF builder pending. |
 | Status aggregation module | Planned | – | Decide orchestrator vs dedicated module in Phase 2. |
 | Test suites (unit/contract/integration/load) | ✅ Unit baseline | – | Bus + first-pipeline pytest coverage automated. |
 | Observability stack | Planned | – | structlog/Prometheus work scheduled for Phase 2. |

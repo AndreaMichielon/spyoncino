@@ -1,41 +1,32 @@
-"""Basic tests for configuration loading."""
+"""Tests for the Dynaconf-backed configuration service."""
 
-import json
-import os
-import tempfile
+from __future__ import annotations
 
 import pytest
 
-
-def test_load_valid_json():
-    """Test that valid JSON can be loaded."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        test_config = {"test_key": "test_value"}
-        json.dump(test_config, f)
-        temp_path = f.name
-
-    try:
-        with open(temp_path) as f:
-            loaded = json.load(f)
-        assert loaded["test_key"] == "test_value"
-    finally:
-        os.unlink(temp_path)
+from spyoncino.core.config import ConfigService, ConfigSnapshot
 
 
-def test_invalid_json_raises_error():
-    """Test that invalid JSON raises an error."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        f.write("{ invalid json }")
-        temp_path = f.name
-
-    try:
-        with pytest.raises(json.JSONDecodeError), open(temp_path) as f:
-            json.load(f)
-    finally:
-        os.unlink(temp_path)
+def test_config_service_loads_snapshot(sample_config_service: ConfigService) -> None:
+    snapshot = sample_config_service.snapshot
+    assert isinstance(snapshot, ConfigSnapshot)
+    assert snapshot.camera.camera_id == "lab"
+    assert snapshot.storage.snapshot_dir.exists()
 
 
-# TODO: Add actual config validation tests
-# - Test setting.json schema validation
-# - Test secrets.json validation
-# - Test default values
+def test_module_config_generation(sample_config_service: ConfigService) -> None:
+    camera_cfg = sample_config_service.module_config_for("modules.input.camera_simulator")
+    assert camera_cfg.options["camera_id"] == "lab"
+    assert camera_cfg.options["frame_width"] == 64
+
+    snapshot_cfg = sample_config_service.module_config_for("modules.event.snapshot_writer")
+    assert snapshot_cfg.options["frame_topics"] == ["camera.lab.frame"]
+
+    telegram_cfg = sample_config_service.module_config_for("modules.output.telegram_notifier")
+    assert telegram_cfg.options["token"] == "123:ABC"
+    assert telegram_cfg.options["chat_id"] == 654321
+
+
+def test_unknown_module_raises_error(sample_config_service: ConfigService) -> None:
+    with pytest.raises(KeyError):
+        sample_config_service.module_config_for("modules.unknown")

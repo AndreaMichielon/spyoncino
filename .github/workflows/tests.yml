@@ -29,7 +29,6 @@ jobs:
     - name: Run type checking (mypy)
       run: |
         mypy src/
-      continue-on-error: true  # Don't fail build on type errors initially
 
     - name: Run tests
       run: |

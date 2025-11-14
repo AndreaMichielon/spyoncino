@@ -44,6 +44,14 @@ class Frame(BasePayload):
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Arbitrary metadata from the capture device."
     )
+    image_bytes: bytes | None = Field(
+        default=None,
+        description="Optional encoded image bytes (PNG/JPEG) for downstream modules.",
+    )
+    content_type: str | None = Field(
+        default=None,
+        description="MIME type describing `image_bytes` payload.",
+    )
 
 
 class DetectionEvent(BasePayload):
@@ -51,6 +59,10 @@ class DetectionEvent(BasePayload):
 
     camera_id: str
     detector_id: str
+    timestamp_utc: dt.datetime = Field(
+        default_factory=lambda: dt.datetime.now(tz=dt.UTC),
+        description="Detection timestamp in UTC.",
+    )
     triggered: bool = Field(
         default=True, description="Whether the detector identified a positive condition."
     )
@@ -62,6 +74,15 @@ class DetectionEvent(BasePayload):
     attributes: dict[str, Any] = Field(
         default_factory=dict, description="Detector-specific metadata."
     )
+
+
+class SnapshotArtifact(BasePayload):
+    """Snapshot persisted to disk and ready for notification modules."""
+
+    camera_id: str
+    artifact_path: str = Field(description="Absolute path to the snapshot file on disk.")
+    content_type: str = Field(default="image/png")
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class HealthStatus(BaseModel):
