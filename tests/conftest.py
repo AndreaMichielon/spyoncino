@@ -33,9 +33,22 @@ def sample_config_dir(tmp_path: Path) -> Path:
       path: "{recordings_dir.as_posix()}"
       snapshot_subdir: "snapshots"
 
+    dedupe:
+      input_topic: "process.motion.detected"
+      output_topic: "process.motion.unique"
+      window_seconds: 0.5
+
+    rate_limit:
+      input_topic: "event.snapshot.ready"
+      output_topic: "event.snapshot.allowed"
+      max_events: 10
+      per_seconds: 60
+
     notifications:
       gif_for_motion: false
       gif_for_person: true
+      gif_duration: 2
+      gif_fps: 8
 
     advanced:
       telegram_read_timeout: 5

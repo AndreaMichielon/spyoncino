@@ -9,10 +9,12 @@ reconfiguration.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 
 from .bus import EventBus
-from .contracts import BaseModule, HealthStatus, ModuleConfig
+from .contracts import BaseModule, HealthStatus, HealthSummary, ModuleConfig
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +22,22 @@ logger = logging.getLogger(__name__)
 class Orchestrator:
     """Manage module lifecycle and shared infrastructure."""
 
-    def __init__(self, *, bus: EventBus | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        bus: EventBus | None = None,
+        health_interval: float = 10.0,
+        publish_health: bool = True,
+        health_topic: str = "status.health.summary",
+    ) -> None:
         self.bus = bus or EventBus()
         self._modules: list[BaseModule] = []
         self._configs: dict[str, ModuleConfig] = {}
         self._running = False
+        self._health_interval = health_interval
+        self._publish_health = publish_health
+        self._health_topic = health_topic
+        self._health_task: asyncio.Task[None] | None = None
 
     async def add_module(self, module: BaseModule, config: ModuleConfig | None = None) -> None:
         """
@@ -51,6 +64,8 @@ class Orchestrator:
             logger.info("Starting module %s", module.name)
             await module.start()
         self._running = True
+        if self._publish_health:
+            self._health_task = asyncio.create_task(self._health_loop(), name="spyoncino-health")
         logger.info("Orchestrator started %d modules.", len(self._modules))
 
     async def stop(self) -> None:
@@ -61,6 +76,11 @@ class Orchestrator:
         for module in reversed(self._modules):
             logger.info("Stopping module %s", module.name)
             await module.stop()
+        if self._health_task:
+            self._health_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._health_task
+            self._health_task = None
         await self.bus.stop()
         self._running = False
         logger.info("Orchestrator stopped.")
@@ -71,3 +91,23 @@ class Orchestrator:
         for module in self._modules:
             reports[module.name] = await module.health()
         return reports
+
+    async def _health_loop(self) -> None:
+        try:
+            while self._running:
+                await asyncio.sleep(self._health_interval)
+                reports = await self.health()
+                overall = self._determine_overall_status(reports)
+                payload = HealthSummary(status=overall, modules=reports)
+                await self.bus.publish(self._health_topic, payload)
+        except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
+            return
+
+    @staticmethod
+    def _determine_overall_status(reports: dict[str, HealthStatus]) -> str:
+        statuses = {report.status for report in reports.values()}
+        if "error" in statuses:
+            return "error"
+        if "degraded" in statuses:
+            return "degraded"
+        return "healthy"

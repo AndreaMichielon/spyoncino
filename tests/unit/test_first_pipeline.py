@@ -6,7 +6,13 @@ import pytest
 from spyoncino.core.config import ConfigService
 from spyoncino.core.contracts import DetectionEvent, SnapshotArtifact
 from spyoncino.core.orchestrator import Orchestrator
-from spyoncino.modules import CameraSimulator, MotionDetector, SnapshotWriter
+from spyoncino.modules import (
+    CameraSimulator,
+    EventDeduplicator,
+    MotionDetector,
+    RateLimiter,
+    SnapshotWriter,
+)
 
 
 @pytest.mark.asyncio
@@ -25,8 +31,8 @@ async def test_camera_to_snapshot_pipeline(sample_config_service: ConfigService)
         artifacts.append(payload)
         snapshot_signal.set()
 
-    orchestrator.bus.subscribe("process.motion.detected", handle_detection)
-    orchestrator.bus.subscribe("event.snapshot.ready", handle_snapshot)
+    orchestrator.bus.subscribe("process.motion.unique", handle_detection)
+    orchestrator.bus.subscribe("event.snapshot.allowed", handle_snapshot)
 
     await orchestrator.add_module(
         CameraSimulator(),
@@ -37,8 +43,16 @@ async def test_camera_to_snapshot_pipeline(sample_config_service: ConfigService)
         config=sample_config_service.module_config_for("modules.process.motion_detector"),
     )
     await orchestrator.add_module(
+        EventDeduplicator(),
+        config=sample_config_service.module_config_for("modules.event.deduplicator"),
+    )
+    await orchestrator.add_module(
         SnapshotWriter(),
         config=sample_config_service.module_config_for("modules.event.snapshot_writer"),
+    )
+    await orchestrator.add_module(
+        RateLimiter(),
+        config=sample_config_service.module_config_for("modules.output.rate_limiter"),
     )
 
     await orchestrator.start()

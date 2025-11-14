@@ -52,6 +52,18 @@ detection:
   bbox_overlap_threshold: 0.6     # Bounding box overlap for same person (0.0-1.0)
 
 # =============================================================================
+# DEDUPLICATION SETTINGS
+# =============================================================================
+dedupe:
+  input_topic: "process.motion.detected"
+  output_topic: "process.motion.unique"
+  window_seconds: 2.0
+  key_fields:
+    - "camera_id"
+    - "detector_id"
+    - "attributes.label"
+
+# =============================================================================
 # STORAGE SETTINGS
 # =============================================================================
 # Configure where and how long recordings are stored
@@ -83,6 +95,16 @@ notifications:
   notification_gif_fps: 10        # FPS for Telegram GIF (lower = smaller file)
   max_gif_frames: 20              # Maximum frames per GIF
   max_file_size_mb: 50.0          # Maximum GIF file size for Telegram (MB)
+
+# =============================================================================
+# RATE LIMIT SETTINGS
+# =============================================================================
+rate_limit:
+  input_topic: "event.snapshot.ready"
+  output_topic: "event.snapshot.allowed"
+  max_events: 5
+  per_seconds: 60
+  key_field: "camera_id"
 
 # =============================================================================
 # SYSTEM SETTINGS

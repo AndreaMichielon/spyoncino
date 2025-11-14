@@ -116,6 +116,13 @@ class HealthStatus(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class HealthSummary(BasePayload):
+    """Aggregated health report emitted on `status.health.summary`."""
+
+    status: str = Field(description="Overall classification.")
+    modules: dict[str, HealthStatus] = Field(default_factory=dict)
+
+
 class ModuleConfig(BaseModel):
     """Baseline configuration contract applied to all modules."""
 

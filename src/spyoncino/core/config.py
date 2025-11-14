@@ -66,6 +66,19 @@ class DetectionSettings(BaseModel):
     class_filter: list[str] = Field(default_factory=list)
 
 
+class DedupeSettings(BaseModel):
+    """Configuration for detection deduplication."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    input_topic: str = Field(default="process.motion.detected")
+    output_topic: str = Field(default="process.motion.unique")
+    window_seconds: float = Field(default=2.0)
+    key_fields: list[str] = Field(
+        default_factory=lambda: ["camera_id", "detector_id", "attributes.label"]
+    )
+
+
 class StorageSettings(BaseModel):
     """File-system persistence configuration."""
 
@@ -107,6 +120,18 @@ class NotificationSettings(BaseModel):
     gif_for_person: bool = Field(default=True)
     gif_duration: float = Field(default=3.0)
     gif_fps: int = Field(default=10)
+
+
+class RateLimitSettings(BaseModel):
+    """Throttle outgoing notifications."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    input_topic: str = Field(default="event.snapshot.ready")
+    output_topic: str = Field(default="event.snapshot.allowed")
+    max_events: int = Field(default=5)
+    per_seconds: float = Field(default=60.0)
+    key_field: str = Field(default="camera_id")
 
 
 class AdvancedSettings(BaseModel):
@@ -169,8 +194,10 @@ class ConfigSnapshot(BaseModel):
 
     camera: CameraSettings = Field(default_factory=CameraSettings)
     detection: DetectionSettings = Field(default_factory=DetectionSettings)
+    dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
+    rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
     telegram: TelegramSecrets = Field(default_factory=TelegramSecrets)
     telegram_security: TelegramSecuritySettings = Field(default_factory=TelegramSecuritySettings)
@@ -221,8 +248,18 @@ class ConfigSnapshot(BaseModel):
             return ModuleConfig(
                 options={
                     "frame_topics": [self.camera.topic],
-                    "detection_topic": "process.motion.detected",
+                    "detection_topic": self.dedupe.output_topic,
                     "output_dir": str(self.storage.snapshot_dir),
+                }
+            )
+
+        def _deduplicator_config() -> ModuleConfig:
+            return ModuleConfig(
+                options={
+                    "input_topic": self.dedupe.input_topic,
+                    "output_topic": self.dedupe.output_topic,
+                    "window_seconds": self.dedupe.window_seconds,
+                    "key_fields": self.dedupe.key_fields,
                 }
             )
 
@@ -230,10 +267,21 @@ class ConfigSnapshot(BaseModel):
             return ModuleConfig(
                 options={
                     "frame_topics": [self.camera.topic],
-                    "detection_topic": "process.yolo.detected",
+                    "detection_topic": self.dedupe.output_topic,
                     "output_dir": str(self.storage.gif_dir),
                     "fps": self.notifications.gif_fps,
                     "duration_seconds": self.notifications.gif_duration,
+                }
+            )
+
+        def _rate_limiter_config() -> ModuleConfig:
+            return ModuleConfig(
+                options={
+                    "input_topic": self.rate_limit.input_topic,
+                    "output_topic": self.rate_limit.output_topic,
+                    "max_events": self.rate_limit.max_events,
+                    "per_seconds": self.rate_limit.per_seconds,
+                    "key_field": self.rate_limit.key_field,
                 }
             )
 
@@ -243,7 +291,7 @@ class ConfigSnapshot(BaseModel):
                 options={
                     "token": self.telegram.token,
                     "chat_id": chat_id,
-                    "topic": "event.snapshot.ready",
+                    "topic": self.rate_limit.output_topic,
                     "read_timeout": self.advanced.telegram_read_timeout,
                     "write_timeout": self.advanced.telegram_write_timeout,
                     "send_typing_action": self.telegram_behavior.send_typing_action,
@@ -264,8 +312,10 @@ class ConfigSnapshot(BaseModel):
             "modules.input.rtsp_camera": _rtsp_camera_config,
             "modules.process.motion_detector": _motion_detector_config,
             "modules.process.yolo_detector": _yolo_detector_config,
+            "modules.event.deduplicator": _deduplicator_config,
             "modules.event.snapshot_writer": _snapshot_writer_config,
             "modules.event.gif_builder": _gif_builder_config,
+            "modules.output.rate_limiter": _rate_limiter_config,
             "modules.output.telegram_notifier": _telegram_notifier_config,
             "modules.status.prometheus_exporter": _prometheus_exporter_config,
         }
@@ -336,8 +386,10 @@ class ConfigService:
         data = {
             "camera": _section(raw, "camera"),
             "detection": _section(raw, "detection"),
+            "dedupe": _section(raw, "dedupe"),
             "storage": _section(raw, "storage"),
             "notifications": _section(raw, "notifications"),
+            "rate_limit": _section(raw, "rate_limit"),
             "advanced": _section(raw, "advanced"),
             "telegram": _section(raw, "telegram"),
             "telegram_security": _section(raw, "security"),

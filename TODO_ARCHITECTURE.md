@@ -107,8 +107,8 @@ src/spyoncino/
 | ✅ 1 | Core scaffolding | Contracts & schemas, bus/orchestrator skeleton, baseline unit tests, sample frame→motion module | Delivered Nov 14: `core.bus`, `core.contracts`, `core.orchestrator`, `modules.input.camera_sim`, `modules.process.motion_detector`, unit tests |
 | ✅ 2 | Baseline features | Dynaconf wiring, snapshot persistence, Telegram notifier, CI for lint/type/unit | Checklist 3-4, 8; Governance quality gate |
 | ✅ 3 | Telemetry expansion | `status.bus` telemetry, RTSP input, YOLO pipeline, GIF builder, Prometheus exporters draft | Checklist 2, 5, 6; Appendix A status reporting |
-| 4 | Reliability hardening | Event dedupe, rate limiting, health aggregation, dual-camera integration tests, ops dashboard docs | Checklist 4, 7, 8; Governance demo |
-| 5 | Advanced processing | Zoning, clip generation, FastAPI control API, config hot reload, contract fixtures | Checklist 3, 5, 8; Appendix A backpressure |
+| ✅ 4 | Reliability hardening | Event dedupe, rate limiting, health aggregation, dual-camera integration tests, ops dashboard docs | Checklist 4, 7, 8; Governance demo |
+| 5 | Advanced processing | Zoning, clip generation, Flask (or FastAPI) control API, config hot reload, contract fixtures | Checklist 3, 5, 8; Appendix A backpressure |
 | 6 | Packaging & load | Docker + compose env, load tests, multi-channel notifier support, documentation refresh | Checklist 5-8; Implementation Status “Media pipeline”, “Test suites” |
 | 7 | Persistence & resilience | S3 storage, database logging, WebSocket updates, graceful shutdown + rollback drills | Checklist 6-7, 9; Appendix B migration |
 | 8 | Production launch | systemd unit, production hardening checklist, HA validation, runbooks, exec sign-off | Checklist 7-9; Governance change management |
@@ -165,6 +165,11 @@ src/spyoncino/
 | Orchestrator lifecycle | ✅ Complete | – | `core/orchestrator.py` manages bus + module lifecycle basics. |
 | Module extractions | ⏳ In progress | – | Legacy code moved under `spyoncino.legacy`, initial modular input/process modules live under `modules/`. |
 | Media pipeline enhancements | ⏳ In progress | – | Snapshot writer + GIF builder shipped; clip builder pending. |
+| Event dedupe module | ✅ Complete | – | `modules.event.deduplicator` filters duplicate detections. |
+| Snapshot rate limiter | ✅ Complete | – | `modules.output.rate_limiter` enforces per-camera throughput. |
+| Health aggregation loop | ✅ Complete | – | Orchestrator publishes `status.health.summary`. |
+| Dual-camera integration tests | ✅ Complete | – | `tests/unit/test_dual_camera_pipeline.py`. |
+| Ops dashboard docs | ✅ Complete | – | `docs/OPS_DASHBOARD.md` outlines metrics & flows. |
 | RTSP input module | ✅ Complete | – | `modules.input.rtsp_camera` ingests network streams with retries. |
 | YOLO detector module | ✅ Complete | – | `modules.process.yolo_detector` wires Ultralytics/stub predictors. |
 | GIF builder module | ✅ Complete | – | `modules.event.gif_builder` buffers frames and emits GIF artifacts. |
