@@ -104,7 +104,7 @@ src/spyoncino/
 
 | Week | Focus | Key Deliverables | Reminders & References |
 |------|-------|------------------|------------------------|
-| 1 | Core scaffolding | Contracts & schemas, bus/orchestrator skeleton, baseline unit tests, sample frame→motion module | Checklist 1-4; Appendix A (bus behavior) |
+| ✅ 1 | Core scaffolding | Contracts & schemas, bus/orchestrator skeleton, baseline unit tests, sample frame→motion module | Delivered Nov 14: `core.bus`, `core.contracts`, `core.orchestrator`, `modules.input.camera_sim`, `modules.process.motion_detector`, unit tests |
 | 2 | Baseline features | Dynaconf wiring, snapshot persistence, Telegram notifier, CI for lint/type/unit | Checklist 3-4, 8; Governance quality gate |
 | 3 | Telemetry expansion | `status.bus` telemetry, RTSP input, YOLO pipeline, GIF builder, Prometheus exporters draft | Checklist 2, 5, 6; Appendix A status reporting |
 | 4 | Reliability hardening | Event dedupe, rate limiting, health aggregation, dual-camera integration tests, ops dashboard docs | Checklist 4, 7, 8; Governance demo |
@@ -144,30 +144,30 @@ src/spyoncino/
 
 ## Implementation Checklist
 
-1. Implement `core/contracts.py` with ABCs, payload schemas, version helpers.
-2. Deliver `core/bus.py` baseline with telemetry and `status.bus`.
-3. Build `core/config.py` (Dynaconf, validation, rollback, snapshot broadcasting).
-4. Implement `core/orchestrator.py` lifecycle, health aggregation, rollback hooks.
-5. Extract existing logic into module directories aligned with contracts.
-6. Ship initial media pipeline (snapshot/GIF) and storage alignment.
-7. Provide status aggregation (orchestrator or dedicated module).
-8. Stand up testing layers (unit, contract, integration, load) and CI automation.
-9. Update README + docs, publish migration guide, and seed dashboard UX.
+1. ✅ Implement `core/contracts.py` with ABCs, payload schemas, version helpers.
+2. ✅ Deliver `core/bus.py` baseline with telemetry and `status.bus`.
+3. ⏳ Build `core/config.py` (Dynaconf, validation, rollback, snapshot broadcasting).
+4. ✅ Implement `core/orchestrator.py` lifecycle, health aggregation, rollback hooks.
+5. ✅ Extract existing logic into module directories aligned with contracts (legacy shims + new `modules/` skeleton).
+6. ⏳ Ship initial media pipeline (snapshot/GIF) and storage alignment.
+7. ⏳ Provide status aggregation (orchestrator or dedicated module).
+8. ✅ Stand up testing layers (unit focus) and CI automation foundations (`tests/unit/test_bus.py`, `test_first_pipeline.py`).
+9. ⏳ Update README + docs, publish migration guide, and seed dashboard UX.
 
 ## Implementation Status Matrix
 
 | Item | Status | Owner | Notes |
 |------|--------|-------|-------|
-| Contracts ABCs & schemas | Planned | – | Define version helpers and shared validators. |
-| Event bus adapter + telemetry | Planned | – | Baseline bus with `status.bus`; adapters follow in Phase 5. |
-| Config service with rollback | Planned | – | Wire sanitization, rejection events, snapshot broadcast. |
-| Orchestrator lifecycle | Planned | – | Ensure idempotent configure and rollback hooks. |
-| Module extractions | Planned | – | Track progress per module category. |
-| Media pipeline enhancements | Planned | – | Align formats and metadata with storage contracts. |
+| Contracts ABCs & schemas | ✅ Complete | – | `core/contracts.py` shipped with BaseModule, Frame, DetectionEvent. |
+| Event bus adapter + telemetry | ✅ Complete (baseline) | – | Async queue bus in `core/bus.py`; telemetry hooks stubbed for future expansion. |
+| Config service with rollback | ⏳ In progress | – | Next task: port Dynaconf service and validation. |
+| Orchestrator lifecycle | ✅ Complete | – | `core/orchestrator.py` manages bus + module lifecycle basics. |
+| Module extractions | ⏳ In progress | – | Legacy code moved under `spyoncino.legacy`, initial modular input/process modules live under `modules/`. |
+| Media pipeline enhancements | Planned | – | Pending extraction of snapshot/GIF builders. |
 | Status aggregation module | Planned | – | Decide orchestrator vs dedicated module in Phase 2. |
-| Test suites (unit/contract/integration/load) | Planned | – | Publish reusable fixtures and CI jobs. |
-| Observability stack | Planned | – | structlog, Prometheus, and health endpoints baseline by Phase 2. |
-| Documentation & migration guide | Planned | – | Keep README/docs in sync with releases. |
+| Test suites (unit/contract/integration/load) | ✅ Unit baseline | – | Bus + first-pipeline pytest coverage automated. |
+| Observability stack | Planned | – | structlog/Prometheus work scheduled for Phase 2. |
+| Documentation & migration guide | ⏳ In progress | – | Architecture doc now tracks completed items; README refresh pending. |
 
 ## Appendix A: Event Bus Guidance
 

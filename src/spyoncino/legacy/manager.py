@@ -1,11 +1,3 @@
-"""
-Compatibility wrapper for the legacy security event manager.
-
-This module re-exports the original implementations now located under
-`spyoncino.legacy`. New code should import from the modular packages
-instead once they are available.
-"""
-
 import logging
 import shutil
 import threading
@@ -17,8 +9,6 @@ from typing import Any
 
 from spyoncino.analytics import EventLogger, EventType, SecurityEvent
 from spyoncino.security import SecuritySystem
-
-from .legacy.manager import *  # noqa: F403
 
 
 @dataclass

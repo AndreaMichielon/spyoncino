@@ -22,6 +22,7 @@ dependencies = [
     "matplotlib>=3.10.5",
     "numpy>=2.2.6",
     "opencv-python-headless>=4.12.0.88",
+    "pydantic>=2.7.0",
     "python-telegram-bot[job-queue]==20.6",
     "pyyaml>=6.0.0",
     "sqlalchemy>=2.0.0",
