@@ -77,12 +77,34 @@ class DetectionEvent(BasePayload):
 
 
 class SnapshotArtifact(BasePayload):
-    """Snapshot persisted to disk and ready for notification modules."""
+    """Snapshot or media artifact persisted to disk and ready for notifications."""
 
     camera_id: str
-    artifact_path: str = Field(description="Absolute path to the snapshot file on disk.")
+    artifact_path: str = Field(description="Absolute path to the artifact on disk.")
     content_type: str = Field(default="image/png")
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BusStatus(BasePayload):
+    """Telemetry snapshot emitted by the event bus on `status.bus`."""
+
+    queue_depth: int = Field(ge=0, description="Current number of queued events.")
+    queue_capacity: int = Field(gt=0, description="Maximum queue capacity.")
+    subscriber_count: int = Field(ge=0, description="Total registered handlers.")
+    topic_count: int = Field(ge=0, description="Unique topics with subscribers.")
+    published_total: int = Field(ge=0, description="Cumulative published events.")
+    processed_total: int = Field(ge=0, description="Cumulative dispatched events.")
+    dropped_total: int = Field(
+        ge=0, description="Events dropped due to queue pressure or shutdown."
+    )
+    lag_seconds: float = Field(
+        ge=0.0,
+        description="Approximate lag between last publish and last dispatch completion.",
+    )
+    watermark: str = Field(
+        default="normal",
+        description="Watermark classification (normal/high/critical).",
+    )
 
 
 class HealthStatus(BaseModel):

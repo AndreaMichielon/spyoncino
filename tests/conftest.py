@@ -25,6 +25,7 @@ def sample_config_dir(tmp_path: Path) -> Path:
     camera:
       camera_id: "lab"
       interval_seconds: 0.01
+      rtsp_url: "rtsp://example.test/stream"
       width: 64
       height: 48
 

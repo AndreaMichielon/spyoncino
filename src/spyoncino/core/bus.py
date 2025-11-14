@@ -10,13 +10,15 @@ full design in later phases.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import time
 from asyncio import QueueEmpty
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from .contracts import BasePayload, EventHandler
+from .contracts import BasePayload, BusStatus, EventHandler
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +43,28 @@ class EventBus:
     routers.
     """
 
-    def __init__(self, *, queue_size: int = 256) -> None:
+    def __init__(
+        self,
+        *,
+        queue_size: int = 256,
+        telemetry_topic: str = "status.bus",
+        telemetry_interval: float = 5.0,
+        telemetry_enabled: bool = True,
+    ) -> None:
         self._queue: asyncio.Queue[tuple[str, BasePayload]] = asyncio.Queue(maxsize=queue_size)
         self._subscribers: dict[str, list[Handler]] = defaultdict(list)
         self._dispatcher_task: asyncio.Task[None] | None = None
+        self._telemetry_task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
+        self._telemetry_topic = telemetry_topic
+        self._telemetry_interval = telemetry_interval
+        self._telemetry_enabled = telemetry_enabled
+        self._published_total = 0
+        self._processed_total = 0
+        self._dropped_total = 0
+        now = time.monotonic()
+        self._last_publish_ts = now
+        self._last_dispatch_ts = now
 
     def subscribe(self, topic: str, handler: Handler) -> Subscription:
         """Register an async handler for a topic."""
@@ -64,6 +83,10 @@ class EventBus:
 
     async def publish(self, topic: str, payload: BasePayload) -> None:
         """Publish a payload for a specific topic."""
+        self._published_total += 1
+        self._last_publish_ts = time.monotonic()
+        if self._queue.full():
+            logger.warning("Event bus queue is full; publisher will wait for free space.")
         await self._queue.put((topic, payload))
         logger.debug("Queued payload for topic %s", topic)
 
@@ -73,6 +96,10 @@ class EventBus:
             self._stopping.clear()
             self._dispatcher_task = asyncio.create_task(self._dispatcher(), name="spyoncino-bus")
             logger.info("Event bus dispatcher started.")
+        if self._telemetry_enabled and self._telemetry_task is None:
+            self._telemetry_task = asyncio.create_task(
+                self._telemetry_loop(), name="spyoncino-bus-telemetry"
+            )
 
     async def stop(self) -> None:
         """Stop the dispatcher loop and drain remaining events."""
@@ -83,6 +110,11 @@ class EventBus:
         await self._dispatcher_task
         self._dispatcher_task = None
         logger.info("Event bus dispatcher stopped.")
+        if self._telemetry_task:
+            self._telemetry_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._telemetry_task
+            self._telemetry_task = None
 
     async def _dispatcher(self) -> None:
         """Internal dispatcher loop that fans out events to subscribers."""
@@ -100,16 +132,55 @@ class EventBus:
                 await asyncio.gather(
                     *(handler(topic, payload) for handler in handlers), return_exceptions=False
                 )
+                self._processed_total += 1
+                self._last_dispatch_ts = time.monotonic()
             finally:
                 self._queue.task_done()
         # Drain queue without processing after stop signal.
         while not self._queue.empty():
             try:
-                self._queue.get_nowait()
+                _topic, _payload = self._queue.get_nowait()
             except QueueEmpty:
                 break
             else:
+                self._dropped_total += 1
                 self._queue.task_done()
+        logger.info("Event bus dispatcher drained %d dropped events.", self._dropped_total)
+
+    async def _telemetry_loop(self) -> None:
+        """Emit periodic BusStatus payloads on the telemetry topic."""
+        try:
+            while not self._stopping.is_set():
+                await asyncio.sleep(self._telemetry_interval)
+                status = self._build_status_payload()
+                await self.publish(self._telemetry_topic, status)
+        except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
+            return
+
+    def _build_status_payload(self) -> BusStatus:
+        depth = self._queue.qsize()
+        capacity = self._queue.maxsize
+        subscriber_count = sum(len(handlers) for handlers in self._subscribers.values())
+        topic_count = len(self._subscribers)
+        lag = max(0.0, self._last_publish_ts - self._last_dispatch_ts)
+        ratio = depth / capacity if capacity else 0.0
+        if ratio >= 0.9:
+            watermark = "critical"
+        elif ratio >= 0.75:
+            watermark = "high"
+        else:
+            watermark = "normal"
+        return BusStatus(
+            queue_depth=depth,
+            queue_capacity=capacity,
+            subscriber_count=subscriber_count,
+            topic_count=topic_count,
+            published_total=self._published_total,
+            processed_total=self._processed_total,
+            dropped_total=self._dropped_total,
+            lag_seconds=lag,
+            watermark=watermark,
+        )
 
 
 class _StopPayload(BasePayload):

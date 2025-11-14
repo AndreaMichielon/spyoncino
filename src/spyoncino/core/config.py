@@ -9,6 +9,7 @@ modules without hand-written dictionaries.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,7 @@ class CameraSettings(BaseModel):
 
     camera_id: str = Field(default="default")
     usb_port: int | str = Field(default=0)
+    rtsp_url: str | None = Field(default=None)
     interval_seconds: float = Field(default=1.0)
     width: int = Field(default=640)
     height: int = Field(default=480)
@@ -60,6 +62,8 @@ class DetectionSettings(BaseModel):
     interval: float = Field(default=2.0)
     motion_threshold: int = Field(default=5)
     confidence: float = Field(default=0.25)
+    model_path: str | None = Field(default=None)
+    class_filter: list[str] = Field(default_factory=list)
 
 
 class StorageSettings(BaseModel):
@@ -71,6 +75,7 @@ class StorageSettings(BaseModel):
     retention_hours: int = Field(default=24)
     aggressive_cleanup_hours: int = Field(default=12)
     snapshot_subdir: str = Field(default="snapshots")
+    gif_subdir: str = Field(default="gifs")
 
     @field_validator("path", mode="before")
     @classmethod
@@ -83,9 +88,14 @@ class StorageSettings(BaseModel):
     def snapshot_dir(self) -> Path:
         return self.path / self.snapshot_subdir
 
+    @property
+    def gif_dir(self) -> Path:
+        return self.path / self.gif_subdir
+
     def ensure_directories(self) -> None:
         self.path.mkdir(parents=True, exist_ok=True)
         self.snapshot_dir.mkdir(parents=True, exist_ok=True)
+        self.gif_dir.mkdir(parents=True, exist_ok=True)
 
 
 class NotificationSettings(BaseModel):
@@ -95,6 +105,8 @@ class NotificationSettings(BaseModel):
 
     gif_for_motion: bool = Field(default=False)
     gif_for_person: bool = Field(default=True)
+    gif_duration: float = Field(default=3.0)
+    gif_fps: int = Field(default=10)
 
 
 class AdvancedSettings(BaseModel):
@@ -169,7 +181,8 @@ class ConfigSnapshot(BaseModel):
 
     def module_config(self, module_name: str) -> ModuleConfig:
         """Produce a ModuleConfig tailored for the requested module."""
-        if module_name == "modules.input.camera_simulator":
+
+        def _camera_sim_config() -> ModuleConfig:
             return ModuleConfig(
                 options={
                     "camera_id": self.camera.camera_id,
@@ -178,13 +191,33 @@ class ConfigSnapshot(BaseModel):
                     "frame_height": self.camera.height,
                 }
             )
-        if module_name == "modules.process.motion_detector":
+
+        def _rtsp_camera_config() -> ModuleConfig:
+            if not self.camera.rtsp_url:
+                raise KeyError("camera.rtsp_url must be configured for RTSP module.")
             return ModuleConfig(
                 options={
-                    "input_topic": self.camera.topic,
+                    "camera_id": self.camera.camera_id,
+                    "rtsp_url": self.camera.rtsp_url,
+                    "fps": self.camera.fps,
                 }
             )
-        if module_name == "modules.event.snapshot_writer":
+
+        def _motion_detector_config() -> ModuleConfig:
+            return ModuleConfig(options={"input_topic": self.camera.topic})
+
+        def _yolo_detector_config() -> ModuleConfig:
+            options: dict[str, Any] = {
+                "input_topics": [self.camera.topic],
+                "confidence_threshold": self.detection.confidence,
+            }
+            if self.detection.model_path:
+                options["model_path"] = self.detection.model_path
+            if self.detection.class_filter:
+                options["class_filter"] = self.detection.class_filter
+            return ModuleConfig(options=options)
+
+        def _snapshot_writer_config() -> ModuleConfig:
             return ModuleConfig(
                 options={
                     "frame_topics": [self.camera.topic],
@@ -192,7 +225,19 @@ class ConfigSnapshot(BaseModel):
                     "output_dir": str(self.storage.snapshot_dir),
                 }
             )
-        if module_name == "modules.output.telegram_notifier":
+
+        def _gif_builder_config() -> ModuleConfig:
+            return ModuleConfig(
+                options={
+                    "frame_topics": [self.camera.topic],
+                    "detection_topic": "process.yolo.detected",
+                    "output_dir": str(self.storage.gif_dir),
+                    "fps": self.notifications.gif_fps,
+                    "duration_seconds": self.notifications.gif_duration,
+                }
+            )
+
+        def _telegram_notifier_config() -> ModuleConfig:
             chat_id = self.telegram.chat_id or self.telegram_security.notification_chat_id
             return ModuleConfig(
                 options={
@@ -204,7 +249,32 @@ class ConfigSnapshot(BaseModel):
                     "send_typing_action": self.telegram_behavior.send_typing_action,
                 }
             )
-        raise KeyError(f"No module configuration defined for {module_name}")
+
+        def _prometheus_exporter_config() -> ModuleConfig:
+            return ModuleConfig(
+                options={
+                    "port": 9093,
+                    "addr": "127.0.0.1",
+                    "bus_topic": "status.bus",
+                }
+            )
+
+        builders: dict[str, Callable[[], ModuleConfig]] = {
+            "modules.input.camera_simulator": _camera_sim_config,
+            "modules.input.rtsp_camera": _rtsp_camera_config,
+            "modules.process.motion_detector": _motion_detector_config,
+            "modules.process.yolo_detector": _yolo_detector_config,
+            "modules.event.snapshot_writer": _snapshot_writer_config,
+            "modules.event.gif_builder": _gif_builder_config,
+            "modules.output.telegram_notifier": _telegram_notifier_config,
+            "modules.status.prometheus_exporter": _prometheus_exporter_config,
+        }
+
+        try:
+            builder = builders[module_name]
+        except KeyError as exc:
+            raise KeyError(f"No module configuration defined for {module_name}") from exc
+        return builder()
 
 
 class ConfigService:

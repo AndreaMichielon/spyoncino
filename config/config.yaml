@@ -15,8 +15,10 @@
 # =============================================================================
 # Configure your camera input source and video parameters
 camera:
+  camera_id: "default"             # Logical identifier used for bus topics
   # Source identification
   usb_port: 0                    # Camera device index (0, 1, 2...) or video file path
+  rtsp_url: null                 # Optional RTSP endpoint (set to actual URL to enable)
 
   # Video resolution
   width: 1280                     # Camera width in pixels (e.g., 640, 1280, 1920)
@@ -38,6 +40,8 @@ detection:
 
   # AI/YOLO settings
   confidence: 0.25                # AI confidence threshold (0.1-0.9, lower = more sensitive)
+  model_path: "config/yolov8n.pt" # Path to YOLO weights
+  class_filter: []                # Optional class names to keep (empty = allow all)
   max_batch_size: 32              # Maximum frames processed per YOLO batch (GPU memory)
 
   # Motion detection
@@ -54,6 +58,8 @@ detection:
 storage:
   # Paths
   path: "recordings"              # Directory for recordings, GIFs, and logs
+  snapshot_subdir: "snapshots"
+  gif_subdir: "gifs"
 
   # Retention policy
   retention_hours: 24             # Hours to keep recordings before auto-deletion
