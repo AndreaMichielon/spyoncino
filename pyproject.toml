@@ -18,6 +18,7 @@ classifiers = [
 ]
 dependencies = [
     "dynaconf>=3.2.5",
+    "fastapi>=0.115.0",
     "imageio>=2.37.0",
     "imageio-ffmpeg>=0.6.0",
     "matplotlib>=3.10.5",
@@ -28,9 +29,10 @@ dependencies = [
     "python-telegram-bot[job-queue]==20.6",
     "pyyaml>=6.0.0",
     "sqlalchemy>=2.0.0",
-    "ultralytics>=8.3.184",
     "torch>=2.0.0",
     "torchvision>=0.15.0",
+    "ultralytics>=8.3.184",
+    "uvicorn>=0.30.0",
 ]
 
 # PyTorch variants (CUDA/CPU) are selected via --index-url in launcher scripts
@@ -45,6 +47,7 @@ Issues = "https://github.com/AndreaMichielon/spyoncino/issues"
 
 [project.optional-dependencies]
 dev = [
+    "httpx>=0.27.0",
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.23.0",

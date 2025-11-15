@@ -1,27 +1,29 @@
-## Current Architecture Snapshot (Week 4)
+## Current Architecture Snapshot (Week 5)
 
 ### Highlights
-- Week 4 “Reliability hardening” features are in: detection dedupe, snapshot rate limiting, automated health summaries, dual-camera integration coverage, and ops dashboard notes.
-- Week rows 1‑3 marked ✅; Week 4 can now close after review.
+- Advanced-processing scope landed: zoning filter, MP4 clip builder, FastAPI control API, and orchestrator-driven config hot reload now run on the async bus.
+- Contracts + config schemas expanded with `MediaArtifact`, `ControlCommand`, `ConfigUpdate`, `ConfigSnapshotPayload`, `ZoneDefinition`, `ClipSettings`, and `ControlApiSettings`.
+- Bus/topic surface now includes `process.motion.zoned`, `event.clip.ready`, `dashboard.control.command`, `config.update`, and `config.snapshot`, keeping UI ↔ core interactions asynchronous.
 
 ### New Code
-- `core.contracts`: adds `HealthSummary` payload for aggregated status reporting.
-- `core.orchestrator`: emits `status.health.summary` at a configurable interval.
-- `modules.event.deduplicator`: suppresses duplicate detections via configurable keys/windows.
-- `modules.output.rate_limiter`: throttles snapshot events before notifiers.
-- `modules.__init__` + subpackages export the new modules.
-- `core.config` / `config/config.yaml`: new `dedupe` and `rate_limit` sections, module builder refactor, defaults wiring snapshot writer/telegram into the new stages.
-- `docs/OPS_DASHBOARD.md`: describes Prometheus metrics, health summaries, and operational expectations.
+- `core.contracts`: new payloads for media artifacts, dashboard commands, and config events.
+- `core.config`: zoning/clip/control sections, `ZoneDefinition` validator, `apply_changes()` helper, and module builder coverage for new components.
+- `core.orchestrator`: subscribes to `config.update`, reapplies module configs, publishes `config.snapshot`.
+- `modules.process.zoning_filter`: annotates detections with zone metadata and optional exclusion logic.
+- `modules.event.clip_builder`: buffers frames and emits MP4 `MediaArtifact` payloads.
+- `modules.dashboard.control_api`: FastAPI server (or in-process app) exposing camera state + zoning endpoints that publish `ControlCommand`/`ConfigUpdate`.
+- `modules.process.yolo_detector`: now stamps per-frame width/height in detection attributes for zoning math.
+- Package exports updated (`modules.__init__`, process/event/dashboard init files).
 
 ### Tests Added / Updated
-- `tests/unit/test_deduplicator.py`, `test_rate_limiter.py`, `test_orchestrator_health.py`.
-- `tests/unit/test_dual_camera_pipeline.py`: ensures two simultaneous cameras succeed through dedupe + rate limiting.
-- `tests/unit/test_first_pipeline.py`: pipeline now exercises dedupe + rate limiter by default.
+- `tests/unit/test_zoning_filter.py`, `test_clip_builder.py`, `test_control_api.py`, `test_config_hot_reload.py`.
+- `tests/unit/test_config.py`: asserts new module builders and `apply_changes()` wiring.
+- Existing pipelines continue to pass; targeted suites run via `spyoncino_env\Scripts\python -m pytest …`.
 
 ### Operations & Notes
-- Prometheus exporter now binds to localhost by default to satisfy Bandit.
-- Snapshot flow: `process.motion.detected → modules.event.deduplicator → process.motion.unique → SnapshotWriter → event.snapshot.ready → RateLimiter → event.snapshot.allowed → Telegram`.
-- Ops dashboard guidance lives in `docs/OPS_DASHBOARD.md`; subscribe to `status.health.summary` for rollups.
+- Config hot reload: publish `ConfigUpdate` on `config.update` to refresh modules without restarts; successful merges emit `config.snapshot`.
+- Detection pipeline now flows through dedupe → zoning → snapshot/clip writers → rate limiter → Telegram.
+- Control API currently runs in “embedded” mode (serve_api=false) during tests; enable FastAPI/Uvicorn when exposing externally.
 
 ### Next Up
-- Phase 5+ deliverables: zoning, clip builder, FastAPI control plane, persistence, etc., per `TODO_ARCHITECTURE.md`.
+- Week 6 scope (packaging + load): docker/compose envs, load tests, multi-channel notifiers, doc refresh per `TODO_ARCHITECTURE.md`.

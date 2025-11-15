@@ -49,30 +49,30 @@ src/spyoncino/
 - **Dynaconf Backbone:** layered config (`config/default.yaml`, environment overrides, environment variables, `.env` for local dev).
 - **Sanitization & Validation:** pre-apply normalization, type coercion, and policy checks; rejected updates emit `ConfigRejected` and log to `status.contract`.
 - **Transactional Rollback:** on partial failure, restore the last snapshot, emit `config.rollback` with diagnostics, and notify orchestrator.
-- **Hot Reload:** accepted updates broadcast `config.snapshot` for subscribed modules to refresh in place.
+- **Hot Reload:** accepted updates broadcast `config.snapshot` for subscribed modules to refresh in place, and `apply_changes()` merges `config.update` payloads without writing to disk.
 
 ### Orchestrator (`core/orchestrator.py`)
 - **Lifecycle:** discover modules, load configuration, instantiate, register subscriptions, and coordinate start/stop with graceful shutdown.
-- **Reconfiguration:** compute per-module diffs; `configure` is idempotent. Failures trigger rollback, `status.contract` alerts, and optional module quarantine.
+- **Reconfiguration:** compute per-module diffs; `configure` is idempotent. Failures trigger rollback, `status.contract` alerts, and optional module quarantine. The orchestrator now subscribes to `config.update`, reapplies module configs, and republishes `config.snapshot` after a successful merge.
 - **Health Aggregation:** poll `health()` hooks, subscribe to `status.*`, and expose unified health summaries for dashboards and readiness probes.
 - **Extensibility:** supports custom module factories, alternate bus adapters, and health reporters without cross-module coupling.
 
 ## Event Flow & Topic Conventions
 
-- **Naming:** `<domain>.<entity>[.<action>]` (e.g., `camera.front_door.frame`, `process.motion.detected`, `event.media.ready`, `notify.telegram.sent`, `status.bus`).
-- **Standard Detection Flow:** `camera.{id}.frame → process.motion.detected → event.snapshot.ready → notify.telegram.queued → notify.telegram.sent`, with optional branching into storage and analytics.
+- **Naming:** `<domain>.<entity>[.<action>]` (e.g., `camera.front_door.frame`, `process.motion.detected`, `event.clip.ready`, `notify.telegram.sent`, `status.bus`, `config.snapshot`).
+- **Standard Detection Flow:** `camera.{id}.frame → process.motion.detected → process.motion.unique → process.motion.zoned → event.snapshot.ready / event.clip.ready → notify.telegram.queued → notify.telegram.sent`, with optional branching into storage and analytics.
 - **Health Flow:** `module.*.health → status.report → analytics.health.summary → dashboard.commands` for operator response.
-- **Rules:** modules communicate only via the bus, assume async fire-and-forget semantics, handle missing subscribers gracefully, and design idempotent handlers for replay tolerance.
+- **Rules:** modules communicate only via the bus (including `config.update`, `config.snapshot`, and `dashboard.control.command`), assume async fire-and-forget semantics, handle missing subscribers gracefully, and design idempotent handlers for replay tolerance.
 
 ## Module Categories
 
 - **Input (`modules/input/`):** acquire frames or streams; publish `camera.{id}.frame`; manage reconnect, FPS, and device health.
-- **Processing (`modules/process/`):** analyze frames (`process.motion`, `process.detected`); support GPU batching and zoning logic.
-- **Event (`modules/event/`):** build artifacts (`event.media.ready`); optimize encoding, manage retention metadata.
+- **Processing (`modules/process/`):** analyze frames (`process.motion`, `process.detected`); support GPU batching, YOLO inference, and zoning filters (`process.motion.zoned`).
+- **Event (`modules/event/`):** build artifacts (`event.media.ready`, `event.clip.ready`); optimize encoding, manage retention metadata.
 - **Output (`modules/output/`):** deliver alerts (`notify.{channel}`); enforce rate limiting, retries, and delivery confirmations.
 - **Storage (`modules/storage/`):** persist artifacts/events; publish `storage.*` acknowledgments and index updates.
 - **Analytics (`modules/analytics/`):** aggregate detections/storage into `analytics.*` snapshots and respond to queries.
-- **Dashboard (`modules/dashboard/`):** expose CLIs/APIs; publish `dashboard.*.commands`, submit `config.update` requests, and consume status feeds.
+- **Dashboard (`modules/dashboard/`):** expose CLIs/APIs (FastAPI control API, bot); publish `dashboard.*.commands`, submit `config.update` requests, and consume status feeds.
 - **Status (`modules/status/`):** optional aggregation of heartbeats and escalations for observability pipelines.
 
 ## Configuration Strategy
@@ -108,10 +108,18 @@ src/spyoncino/
 | ✅ 2 | Baseline features | Dynaconf wiring, snapshot persistence, Telegram notifier, CI for lint/type/unit | Checklist 3-4, 8; Governance quality gate |
 | ✅ 3 | Telemetry expansion | `status.bus` telemetry, RTSP input, YOLO pipeline, GIF builder, Prometheus exporters draft | Checklist 2, 5, 6; Appendix A status reporting |
 | ✅ 4 | Reliability hardening | Event dedupe, rate limiting, health aggregation, dual-camera integration tests, ops dashboard docs | Checklist 4, 7, 8; Governance demo |
-| 5 | Advanced processing | Zoning, clip generation, Flask (or FastAPI) control API, config hot reload, contract fixtures | Checklist 3, 5, 8; Appendix A backpressure |
+| ✅ 5 | Advanced processing | Zoning filter, MP4 clip builder, FastAPI control API, config hot reload, contract fixtures | Checklist 3, 5, 8; Appendix A backpressure |
 | 6 | Packaging & load | Docker + compose env, load tests, multi-channel notifier support, documentation refresh | Checklist 5-8; Implementation Status “Media pipeline”, “Test suites” |
 | 7 | Persistence & resilience | S3 storage, database logging, WebSocket updates, graceful shutdown + rollback drills | Checklist 6-7, 9; Appendix B migration |
 | 8 | Production launch | systemd unit, production hardening checklist, HA validation, runbooks, exec sign-off | Checklist 7-9; Governance change management |
+
+#### Week 5 Delivery Notes
+
+- **Config Hot Reload:** `core.config.ConfigService` now exposes `apply_changes()` while `core.orchestrator.Orchestrator` listens on `config.update` and republishes `config.snapshot`, so modules reconfigure in-place without restarts.
+- **Zoning Pipeline:** Introduced `modules.process.zoning_filter` plus new `ZoneDefinition` / `ZoningSettings` schemas; detections now annotate `attributes.zone_matches` on `process.motion.zoned`.
+- **Media Clips:** Added `MediaArtifact` payloads and `modules.event.clip_builder` to publish MP4 clips (`event.clip.ready`) following Appendix A backpressure limits.
+- **Control Surface:** Added FastAPI-based `modules.dashboard.control_api` that emits `ControlCommand` and `ConfigUpdate` events for camera toggles and zoning updates.
+- **Contract/Test Fixtures:** `core.contracts` gained `ControlCommand`, `ConfigUpdate`, and `ConfigSnapshotPayload`; new unit suites cover zoning, clips, control API, and orchestrator hot reload flows.
 
 ### Governance & Checkpoints
 
@@ -149,8 +157,8 @@ src/spyoncino/
 3. ✅ Build `core/config.py` (Dynaconf, validation, rollback, snapshot broadcasting).
 4. ✅ Implement `core/orchestrator.py` lifecycle, health aggregation, rollback hooks.
 5. ✅ Extract existing logic into module directories aligned with contracts (legacy shims + new `modules/` skeleton).
-6. ⏳ Ship initial media pipeline (snapshot/GIF) and storage alignment.
-7. ⏳ Provide status aggregation (orchestrator or dedicated module).
+6. ✅ Ship baseline media pipeline (snapshot/GIF/clip) and storage alignment.
+7. ✅ Provide status aggregation (orchestrator or dedicated module).
 8. ✅ Stand up testing layers (unit focus) and CI automation foundations (`tests/unit/test_bus.py`, `test_first_pipeline.py`).
 9. ⏳ Update README + docs, publish migration guide, and seed dashboard UX.
 
@@ -161,10 +169,10 @@ src/spyoncino/
 | Contracts ABCs & schemas | ✅ Complete | – | `core/contracts.py` shipped with BaseModule, Frame, DetectionEvent. |
 | Event bus adapter + telemetry | ✅ Complete (baseline) | – | Async queue bus in `core/bus.py`; telemetry hooks stubbed for future expansion. |
 | `status.bus` telemetry & Prometheus exporter | ✅ Complete | – | Bus now emits `BusStatus`; Prometheus exporter module publishes gauges. |
-| Config service with rollback | ⏳ In progress | – | Next task: port Dynaconf service and validation. |
+| Config service with rollback | ✅ Complete | – | Dynaconf snapshot builder ships `apply_changes()` and hot-reload schemas (`ConfigSnapshotPayload`). |
 | Orchestrator lifecycle | ✅ Complete | – | `core/orchestrator.py` manages bus + module lifecycle basics. |
 | Module extractions | ⏳ In progress | – | Legacy code moved under `spyoncino.legacy`, initial modular input/process modules live under `modules/`. |
-| Media pipeline enhancements | ⏳ In progress | – | Snapshot writer + GIF builder shipped; clip builder pending. |
+| Media pipeline enhancements | ✅ Complete | – | Snapshot writer, GIF builder, and MP4 clip builder cover artifact surface area. |
 | Event dedupe module | ✅ Complete | – | `modules.event.deduplicator` filters duplicate detections. |
 | Snapshot rate limiter | ✅ Complete | – | `modules.output.rate_limiter` enforces per-camera throughput. |
 | Health aggregation loop | ✅ Complete | – | Orchestrator publishes `status.health.summary`. |
@@ -174,7 +182,10 @@ src/spyoncino/
 | YOLO detector module | ✅ Complete | – | `modules.process.yolo_detector` wires Ultralytics/stub predictors. |
 | GIF builder module | ✅ Complete | – | `modules.event.gif_builder` buffers frames and emits GIF artifacts. |
 | Prometheus exporter module | ✅ Complete (draft) | – | `modules.status.prometheus_exporter` exposes bus telemetry via HTTP. |
-| Status aggregation module | Planned | – | Decide orchestrator vs dedicated module in Phase 2. |
+| Status aggregation module | ✅ Complete | – | Orchestrator publishes `status.health.summary`; dedicated module deferred. |
+| Zoning filter module | ✅ Complete | – | `modules.process.zoning_filter` annotates detections and enforces include/exclude zones. |
+| Clip builder module | ✅ Complete | – | `modules.event.clip_builder` emits MP4 `MediaArtifact` payloads on `event.clip.ready`. |
+| Control API module | ✅ Complete | – | FastAPI `modules.dashboard.control_api` publishes `ControlCommand` / `ConfigUpdate`. |
 | Test suites (unit/contract/integration/load) | ✅ Unit baseline | – | Bus + first-pipeline pytest coverage automated. |
 | Observability stack | Planned | – | structlog/Prometheus work scheduled for Phase 2. |
 | Documentation & migration guide | ⏳ In progress | – | Architecture doc now tracks completed items; README refresh pending. |

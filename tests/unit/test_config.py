@@ -26,7 +26,23 @@ def test_module_config_generation(sample_config_service: ConfigService) -> None:
     assert telegram_cfg.options["token"] == "123:ABC"
     assert telegram_cfg.options["chat_id"] == 654321
 
+    clip_cfg = sample_config_service.module_config_for("modules.event.clip_builder")
+    assert clip_cfg.options["enabled"] is True
+    assert clip_cfg.options["output_topic"] == "event.clip.ready"
+
+    zoning_cfg = sample_config_service.module_config_for("modules.process.zoning_filter")
+    assert zoning_cfg.options["enabled"] is True
+    assert zoning_cfg.options["zones"]
+
+    control_api_cfg = sample_config_service.module_config_for("modules.dashboard.control_api")
+    assert control_api_cfg.options["serve_api"] is False
+
 
 def test_unknown_module_raises_error(sample_config_service: ConfigService) -> None:
     with pytest.raises(KeyError):
         sample_config_service.module_config_for("modules.unknown")
+
+
+def test_apply_changes_updates_snapshot(sample_config_service: ConfigService) -> None:
+    snapshot = sample_config_service.apply_changes({"zoning": {"drop_outside": True}})
+    assert snapshot.zoning.drop_outside is True

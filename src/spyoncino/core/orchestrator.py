@@ -13,8 +13,16 @@ import asyncio
 import contextlib
 import logging
 
-from .bus import EventBus
-from .contracts import BaseModule, HealthStatus, HealthSummary, ModuleConfig
+from .bus import EventBus, Subscription
+from .config import ConfigService, ConfigSnapshot
+from .contracts import (
+    BaseModule,
+    ConfigSnapshotPayload,
+    ConfigUpdate,
+    HealthStatus,
+    HealthSummary,
+    ModuleConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +46,11 @@ class Orchestrator:
         self._publish_health = publish_health
         self._health_topic = health_topic
         self._health_task: asyncio.Task[None] | None = None
+        self._config_service: ConfigService | None = None
+        self._config_update_topic = "config.update"
+        self._config_snapshot_topic = "config.snapshot"
+        self._config_subscription: Subscription | None = None
+        self._config_lock = asyncio.Lock()
 
     async def add_module(self, module: BaseModule, config: ModuleConfig | None = None) -> None:
         """
@@ -54,6 +67,26 @@ class Orchestrator:
         self._configs[module.name] = config
         logger.info("Registered module %s", module.name)
 
+    def enable_config_hot_reload(
+        self,
+        config_service: ConfigService,
+        *,
+        update_topic: str = "config.update",
+        snapshot_topic: str = "config.snapshot",
+    ) -> None:
+        """
+        Enable config hot reload by subscribing to update events on the bus.
+        """
+        if self._config_service is not None:
+            raise RuntimeError("Config hot reload already enabled.")
+        self._config_service = config_service
+        self._config_update_topic = update_topic
+        self._config_snapshot_topic = snapshot_topic
+        self._config_subscription = self.bus.subscribe(update_topic, self._handle_config_update)
+        logger.info(
+            "Config hot reload enabled; listening for updates on %s", self._config_update_topic
+        )
+
     async def start(self) -> None:
         """Start the bus and all registered modules."""
         if self._running:
@@ -64,6 +97,8 @@ class Orchestrator:
             logger.info("Starting module %s", module.name)
             await module.start()
         self._running = True
+        if self._config_service:
+            await self._publish_config_snapshot(self._config_service.snapshot)
         if self._publish_health:
             self._health_task = asyncio.create_task(self._health_loop(), name="spyoncino-health")
         logger.info("Orchestrator started %d modules.", len(self._modules))
@@ -81,6 +116,9 @@ class Orchestrator:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._health_task
             self._health_task = None
+        if self._config_subscription:
+            self.bus.unsubscribe(self._config_subscription)
+            self._config_subscription = None
         await self.bus.stop()
         self._running = False
         logger.info("Orchestrator stopped.")
@@ -91,6 +129,38 @@ class Orchestrator:
         for module in self._modules:
             reports[module.name] = await module.health()
         return reports
+
+    async def _handle_config_update(self, topic: str, payload: ConfigUpdate) -> None:
+        if not isinstance(payload, ConfigUpdate):
+            logger.debug("Ignoring non ConfigUpdate payload on %s", topic)
+            return
+        if self._config_service is None:
+            logger.warning("Received config update without config service attached.")
+            return
+        async with self._config_lock:
+            if payload.reload or not payload.changes:
+                snapshot = self._config_service.refresh()
+            else:
+                snapshot = self._config_service.apply_changes(payload.changes)
+            await self._apply_config_snapshot(snapshot)
+
+    async def _apply_config_snapshot(self, snapshot: ConfigSnapshot) -> None:
+        if self._config_service is None:
+            return
+        logger.info("Applying refreshed configuration to %d modules", len(self._modules))
+        for module in self._modules:
+            try:
+                new_config = self._config_service.module_config_for(module.name)
+            except KeyError:
+                logger.debug("No config builder registered for module %s", module.name)
+                continue
+            await module.configure(new_config)
+            self._configs[module.name] = new_config
+        await self._publish_config_snapshot(snapshot)
+
+    async def _publish_config_snapshot(self, snapshot: ConfigSnapshot) -> None:
+        payload = ConfigSnapshotPayload(data=snapshot.model_dump(mode="python"))
+        await self.bus.publish(self._config_snapshot_topic, payload)
 
     async def _health_loop(self) -> None:
         try:

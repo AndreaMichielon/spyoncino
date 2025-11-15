@@ -85,6 +85,16 @@ class SnapshotArtifact(BasePayload):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class MediaArtifact(BasePayload):
+    """Generic media artifact such as MP4 clips or GIFs."""
+
+    camera_id: str
+    artifact_path: str = Field(description="Absolute path to the artifact on disk.")
+    media_kind: str = Field(default="clip", description="Human readable media type.")
+    content_type: str = Field(default="video/mp4")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class BusStatus(BasePayload):
     """Telemetry snapshot emitted by the event bus on `status.bus`."""
 
@@ -193,3 +203,28 @@ class BaseModule(abc.ABC):
         """Return a basic health status; modules can override for richer diagnostics."""
         status = "healthy" if self._configured else "degraded"
         return HealthStatus(status=status, details={"configured": self._configured})
+
+
+class ControlCommand(BasePayload):
+    """Payload emitted by dashboards or APIs to control modules."""
+
+    command: str = Field(description="Command identifier, e.g. camera.state")
+    camera_id: str | None = Field(default=None)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConfigUpdate(BasePayload):
+    """Request to apply configuration changes or reload from disk."""
+
+    source: str = Field(default="unknown")
+    changes: dict[str, Any] = Field(default_factory=dict)
+    reload: bool = Field(
+        default=False,
+        description="When true the config service should reload from disk instead of applying changes.",
+    )
+
+
+class ConfigSnapshotPayload(BasePayload):
+    """Published whenever a new configuration snapshot becomes active."""
+
+    data: dict[str, Any] = Field(default_factory=dict, description="Snapshot dictionary view.")

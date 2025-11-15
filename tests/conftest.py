@@ -29,9 +29,28 @@ def sample_config_dir(tmp_path: Path) -> Path:
       width: 64
       height: 48
 
+    zoning:
+      enabled: true
+      input_topic: "process.motion.unique"
+      output_topic: "process.motion.zoned"
+      zones:
+        - camera_id: "lab"
+          zone_id: "door"
+          bounds: [0.0, 0.0, 0.6, 1.0]
+          labels: ["person"]
+
+    clip:
+      enabled: true
+      detection_topic: "process.motion.unique"
+      output_topic: "event.clip.ready"
+      duration_seconds: 0.5
+      fps: 4
+      max_artifacts: 2
+
     storage:
       path: "{recordings_dir.as_posix()}"
       snapshot_subdir: "snapshots"
+      clip_subdir: "clips"
 
     dedupe:
       input_topic: "process.motion.detected"
@@ -43,6 +62,11 @@ def sample_config_dir(tmp_path: Path) -> Path:
       output_topic: "event.snapshot.allowed"
       max_events: 10
       per_seconds: 60
+
+    control_api:
+      host: "127.0.0.1"
+      port: 9000
+      serve_api: false
 
     notifications:
       gif_for_motion: false

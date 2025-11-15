@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dynaconf import Dynaconf
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -25,6 +25,17 @@ def _section(raw: dict[str, Any], key: str) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     return {}
+
+
+def _deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge dictionaries without mutating the originals."""
+    result: dict[str, Any] = {**base}
+    for key, value in updates.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
 
 
 CONFIG_FILENAMES = ("config.yaml", "telegram.yaml", "secrets.yaml")
@@ -89,6 +100,7 @@ class StorageSettings(BaseModel):
     aggressive_cleanup_hours: int = Field(default=12)
     snapshot_subdir: str = Field(default="snapshots")
     gif_subdir: str = Field(default="gifs")
+    clip_subdir: str = Field(default="clips")
 
     @field_validator("path", mode="before")
     @classmethod
@@ -105,10 +117,15 @@ class StorageSettings(BaseModel):
     def gif_dir(self) -> Path:
         return self.path / self.gif_subdir
 
+    @property
+    def clip_dir(self) -> Path:
+        return self.path / self.clip_subdir
+
     def ensure_directories(self) -> None:
         self.path.mkdir(parents=True, exist_ok=True)
         self.snapshot_dir.mkdir(parents=True, exist_ok=True)
         self.gif_dir.mkdir(parents=True, exist_ok=True)
+        self.clip_dir.mkdir(parents=True, exist_ok=True)
 
 
 class NotificationSettings(BaseModel):
@@ -132,6 +149,82 @@ class RateLimitSettings(BaseModel):
     max_events: int = Field(default=5)
     per_seconds: float = Field(default=60.0)
     key_field: str = Field(default="camera_id")
+
+
+class ZoneDefinition(BaseModel):
+    """Single zone definition applied to detections."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    camera_id: str = Field(default="default")
+    zone_id: str = Field(description="Stable identifier for the zone.")
+    name: str | None = Field(default=None)
+    bounds: tuple[float, float, float, float] = Field(
+        default=(0.0, 0.0, 1.0, 1.0),
+        description="Normalized (x1, y1, x2, y2) bounds.",
+    )
+    labels: list[str] = Field(default_factory=list)
+    action: Literal["include", "exclude"] = Field(default="include")
+    frame_width: int | None = None
+    frame_height: int | None = None
+
+    @field_validator("bounds")
+    @classmethod
+    def _validate_bounds(
+        cls, value: tuple[float, float, float, float]
+    ) -> tuple[float, float, float, float]:
+        if len(value) != 4:
+            raise ValueError("bounds must contain four float values")
+        x1, y1, x2, y2 = value
+        if not (0.0 <= x1 <= 1.0 and 0.0 <= y1 <= 1.0 and 0.0 <= x2 <= 1.0 and 0.0 <= y2 <= 1.0):
+            raise ValueError("bounds must be normalized between 0 and 1")
+        if x2 <= x1 or y2 <= y1:
+            raise ValueError("bounds must describe a positive area")
+        return value
+
+
+class ZoningSettings(BaseModel):
+    """Configuration for the zoning processor."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = Field(default=False)
+    input_topic: str = Field(default="process.motion.unique")
+    output_topic: str = Field(default="process.motion.zoned")
+    unmatched_topic: str | None = Field(
+        default=None, description="Optional topic for detections that miss all zones."
+    )
+    drop_outside: bool = Field(
+        default=False, description="When true, detections outside include zones are dropped."
+    )
+    frame_width: int = Field(default=640)
+    frame_height: int = Field(default=480)
+    zones: list[ZoneDefinition] = Field(default_factory=list)
+
+
+class ClipSettings(BaseModel):
+    """Configuration for MP4 clip generation."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = Field(default=False)
+    detection_topic: str = Field(default="process.motion.unique")
+    output_topic: str = Field(default="event.clip.ready")
+    duration_seconds: float = Field(default=5.0)
+    fps: int = Field(default=12)
+    max_artifacts: int | None = Field(default=25)
+
+
+class ControlApiSettings(BaseModel):
+    """Control API (FastAPI) configuration."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    host: str = Field(default="127.0.0.1")
+    port: int = Field(default=8080)
+    serve_api: bool = Field(default=True)
+    command_topic: str = Field(default="dashboard.control.command")
+    config_topic: str = Field(default="config.update")
 
 
 class AdvancedSettings(BaseModel):
@@ -198,7 +291,10 @@ class ConfigSnapshot(BaseModel):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
+    zoning: ZoningSettings = Field(default_factory=ZoningSettings)
+    clip: ClipSettings = Field(default_factory=ClipSettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
+    control_api: ControlApiSettings = Field(default_factory=ControlApiSettings)
     telegram: TelegramSecrets = Field(default_factory=TelegramSecrets)
     telegram_security: TelegramSecuritySettings = Field(default_factory=TelegramSecuritySettings)
     telegram_behavior: TelegramBehaviorSettings = Field(default_factory=TelegramBehaviorSettings)
@@ -274,6 +370,45 @@ class ConfigSnapshot(BaseModel):
                 }
             )
 
+        def _clip_builder_config() -> ModuleConfig:
+            return ModuleConfig(
+                options={
+                    "enabled": self.clip.enabled,
+                    "frame_topics": [self.camera.topic],
+                    "detection_topic": self.clip.detection_topic,
+                    "output_topic": self.clip.output_topic,
+                    "output_dir": str(self.storage.clip_dir),
+                    "fps": self.clip.fps,
+                    "duration_seconds": self.clip.duration_seconds,
+                    "max_artifacts": self.clip.max_artifacts,
+                }
+            )
+
+        def _zoning_filter_config() -> ModuleConfig:
+            return ModuleConfig(
+                options={
+                    "enabled": self.zoning.enabled,
+                    "input_topic": self.zoning.input_topic,
+                    "output_topic": self.zoning.output_topic,
+                    "unmatched_topic": self.zoning.unmatched_topic,
+                    "drop_outside": self.zoning.drop_outside,
+                    "frame_width": self.zoning.frame_width,
+                    "frame_height": self.zoning.frame_height,
+                    "zones": [zone.model_dump() for zone in self.zoning.zones],
+                }
+            )
+
+        def _control_api_config() -> ModuleConfig:
+            return ModuleConfig(
+                options={
+                    "host": self.control_api.host,
+                    "port": self.control_api.port,
+                    "serve_api": self.control_api.serve_api,
+                    "command_topic": self.control_api.command_topic,
+                    "config_topic": self.control_api.config_topic,
+                }
+            )
+
         def _rate_limiter_config() -> ModuleConfig:
             return ModuleConfig(
                 options={
@@ -315,9 +450,12 @@ class ConfigSnapshot(BaseModel):
             "modules.event.deduplicator": _deduplicator_config,
             "modules.event.snapshot_writer": _snapshot_writer_config,
             "modules.event.gif_builder": _gif_builder_config,
+            "modules.event.clip_builder": _clip_builder_config,
+            "modules.process.zoning_filter": _zoning_filter_config,
             "modules.output.rate_limiter": _rate_limiter_config,
             "modules.output.telegram_notifier": _telegram_notifier_config,
             "modules.status.prometheus_exporter": _prometheus_exporter_config,
+            "modules.dashboard.control_api": _control_api_config,
         }
 
         try:
@@ -368,6 +506,18 @@ class ConfigService:
         self._snapshot.storage.ensure_directories()
         return self._snapshot
 
+    def apply_changes(self, changes: dict[str, Any]) -> ConfigSnapshot:
+        """
+        Merge the provided changes into the current configuration snapshot.
+
+        This does not persist the changes to disk but enables hot reload flows.
+        """
+        raw = self._settings.as_dict()
+        merged = _deep_merge(raw, changes)
+        self._snapshot = self._build_snapshot(merged)
+        self._snapshot.storage.ensure_directories()
+        return self._snapshot
+
     def module_config_for(self, module: str | type[BaseModule] | BaseModule) -> ModuleConfig:
         """
         Convenient wrapper around ConfigSnapshot.module_config that accepts
@@ -381,8 +531,14 @@ class ConfigService:
             module_name = getattr(module, "name", module.__name__)
         return self._snapshot.module_config(module_name)
 
-    def _build_snapshot(self) -> ConfigSnapshot:
-        raw = self._settings.as_dict()
+    def _build_snapshot(self, raw: dict[str, Any] | None = None) -> ConfigSnapshot:
+        data = self._extract_snapshot_data(raw or self._settings.as_dict())
+        try:
+            return ConfigSnapshot.model_validate(data)
+        except ValidationError as exc:
+            raise ConfigError("Configuration validation failed") from exc
+
+    def _extract_snapshot_data(self, raw: dict[str, Any]) -> dict[str, Any]:
         data = {
             "camera": _section(raw, "camera"),
             "detection": _section(raw, "detection"),
@@ -390,23 +546,27 @@ class ConfigService:
             "storage": _section(raw, "storage"),
             "notifications": _section(raw, "notifications"),
             "rate_limit": _section(raw, "rate_limit"),
+            "zoning": _section(raw, "zoning"),
+            "clip": _section(raw, "clip"),
             "advanced": _section(raw, "advanced"),
+            "control_api": _section(raw, "control_api"),
             "telegram": _section(raw, "telegram"),
             "telegram_security": _section(raw, "security"),
             "telegram_behavior": _section(raw, "behavior"),
             "telegram_rate_limiting": _section(raw, "rate_limiting"),
         }
-        try:
-            return ConfigSnapshot.model_validate(data)
-        except ValidationError as exc:
-            raise ConfigError("Configuration validation failed") from exc
+        return data
 
 
 __all__ = [
     "AdvancedSettings",
     "CameraSettings",
+    "ClipSettings",
     "ConfigError",
     "ConfigService",
     "ConfigSnapshot",
+    "ControlApiSettings",
     "StorageSettings",
+    "ZoneDefinition",
+    "ZoningSettings",
 ]

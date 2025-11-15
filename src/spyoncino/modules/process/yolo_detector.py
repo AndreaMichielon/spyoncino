@@ -138,6 +138,10 @@ class YoloDetector(BaseModule):
             self._decode_image, payload.image_bytes, payload.content_type
         )
         candidates = await asyncio.to_thread(self._predictor.predict, image_array)
+        frame_meta = {
+            "width": int(image_array.shape[1]),
+            "height": int(image_array.shape[0]),
+        }
         for candidate in candidates:
             if candidate.confidence < self._confidence_threshold:
                 continue
@@ -151,6 +155,7 @@ class YoloDetector(BaseModule):
                 attributes={
                     "label": candidate.label,
                     "bbox": candidate.bbox,
+                    "frame": frame_meta,
                 },
             )
             await self.bus.publish(self._output_topic, detection)
