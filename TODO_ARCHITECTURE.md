@@ -130,7 +130,7 @@ src/spyoncino/
 | ✅ 3 | Telemetry expansion | `status.bus` telemetry, RTSP input, YOLO pipeline, GIF builder, Prometheus exporters draft | Checklist 2, 5, 6; Appendix A status reporting |
 | ✅ 4 | Reliability hardening | Event dedupe, rate limiting, health aggregation, dual-camera integration tests, ops dashboard docs | Checklist 4, 7, 8; Governance demo |
 | ✅ 5 | Advanced processing | Zoning filter, MP4 clip builder, FastAPI control API, config hot reload, contract fixtures | Checklist 3, 5, 8; Appendix A backpressure |
-| 6 | Modular parity & packaging | Orchestrator entrypoint + config wiring, storage/analytics modules, Telegram parity, motion/person pipeline extraction, Docker/compose packaging + load tests | Checklist 5-8; Implementation Status “Legacy parity”, “Media pipeline”, “Test suites” |
+| ✅ 6 | Modular parity & packaging | Orchestrator entrypoint + config wiring, storage/analytics modules, Telegram parity, motion/person pipeline extraction, Docker/compose packaging + load tests | Checklist 5-8; Implementation Status “Legacy parity”, “Media pipeline”, “Test suites” |
 | 7 | Persistence & resilience | S3 storage, database logging, WebSocket updates, graceful shutdown + rollback drills | Checklist 6-7, 9; Appendix B migration |
 | 8 | Production launch | systemd unit, production hardening checklist, HA validation, runbooks, exec sign-off | Checklist 7-9; Governance change management |
 
@@ -232,9 +232,9 @@ src/spyoncino/
 | Item | Status | Notes |
 |------|--------|-------|
 | Modular orchestrator entrypoint & config wiring | ✅ Complete | `spyoncino-modular` (see `spyoncino.orchestrator_entrypoint`) wires ConfigService, hot reload, presets, and signal handling. |
-| Storage retention & analytics modules | Planned (Week 6) | Port `SecurityEventManager` retention loop + `EventLogger` into dedicated storage/analytics modules on the bus. |
-| Telegram notifier & control parity | Planned (Week 6) | Extend notifier/control bot for GIF/clip routing, rate limiting, admin commands matching legacy bot. |
-| Motion/person detection pipeline extraction | Planned (Week 6) | Wrap legacy motion/YOLO processing (anti-spam, GIF workflows) as modular processors. |
+| Storage retention & analytics modules | ✅ Complete | `modules.storage.retention` enforces retention + `storage.stats`; `modules.analytics.event_logger` logs bus events to SQLite. |
+| Telegram notifier & control parity | ✅ Complete | Telegram notifier routes snapshots/GIFs/clips; bot adds storage stats + `/cleanup` parity commands. |
+| Motion/person detection pipeline extraction | ✅ Complete | `modules.process.detection_event_router` ports anti-spam alert pipeline feeding GIF/clip workflows. |
 
 ## Appendix A: Event Bus Guidance
 

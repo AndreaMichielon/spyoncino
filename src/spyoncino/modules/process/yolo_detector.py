@@ -37,6 +37,9 @@ class PredictorProtocol:
     def predict(self, image: np.ndarray) -> list[DetectionCandidate]:  # pragma: no cover - protocol
         raise NotImplementedError
 
+    def class_names(self) -> Sequence[str]:  # pragma: no cover - protocol
+        raise NotImplementedError
+
 
 class UltralyticsPredictor(PredictorProtocol):
     """Adapter that wraps an Ultralytics YOLO model."""
@@ -47,6 +50,13 @@ class UltralyticsPredictor(PredictorProtocol):
         except ModuleNotFoundError as exc:  # pragma: no cover - import guard
             raise RuntimeError("Ultralytics is not installed") from exc
         self._model = YOLO(model_path or "yolov8n.pt")
+        names = getattr(self._model, "names", {})
+        if isinstance(names, dict):
+            self._class_names = [str(value) for value in names.values()]
+        elif isinstance(names, list | tuple | set):
+            self._class_names = [str(value) for value in names]
+        else:
+            self._class_names = []
 
     def predict(self, image: np.ndarray) -> list[DetectionCandidate]:  # pragma: no cover - heavy
         results = self._model(
@@ -66,6 +76,9 @@ class UltralyticsPredictor(PredictorProtocol):
                     DetectionCandidate(label=label, confidence=float(conf), bbox=bbox)  # type: ignore[arg-type]
                 )
         return candidates
+
+    def class_names(self) -> Sequence[str]:  # pragma: no cover - simple getter
+        return self._class_names
 
 
 class YoloDetector(BaseModule):
@@ -87,6 +100,7 @@ class YoloDetector(BaseModule):
         self._model_path: str | None = None
         self._confidence_threshold = 0.25
         self._class_filter: set[str] = set()
+        self._alert_labels: set[str] = set()
         self._subscriptions: list[Subscription] = []
 
     async def configure(self, config: ModuleConfig) -> None:
@@ -104,10 +118,16 @@ class YoloDetector(BaseModule):
         class_filter = options.get("class_filter")
         if class_filter:
             self._class_filter = {str(item) for item in class_filter}
+        alert_labels = options.get("alert_labels")
+        if alert_labels:
+            self._alert_labels = {str(label).lower() for label in alert_labels}
+        else:
+            self._alert_labels = set()
 
     async def start(self) -> None:
         if self._predictor is None:
             self._predictor = self._predictor_factory(self._model_path)
+        self._validate_alert_labels()
         for topic in self._input_topics:
             self._subscriptions.append(self.bus.subscribe(topic, self._handle_frame))
         logger.info(
@@ -159,6 +179,21 @@ class YoloDetector(BaseModule):
                 },
             )
             await self.bus.publish(self._output_topic, detection)
+
+    def _validate_alert_labels(self) -> None:
+        if not self._alert_labels or self._predictor is None:
+            return
+        try:
+            available = {str(name).lower() for name in self._predictor.class_names()}
+        except (AttributeError, TypeError):
+            available = set()
+        missing = [label for label in self._alert_labels if label not in available]
+        if missing:
+            raise ValueError(
+                "Unknown alert labels configured for YoloDetector: "
+                f"{', '.join(sorted(missing))}. "
+                f"Available classes: {', '.join(sorted(available)) or 'unknown'}"
+            )
 
     def _decode_image(self, image_bytes: bytes, content_type: str | None) -> np.ndarray:
         with io.BytesIO(image_bytes) as buffer:

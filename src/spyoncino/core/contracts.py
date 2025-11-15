@@ -228,3 +228,25 @@ class ConfigSnapshotPayload(BasePayload):
     """Published whenever a new configuration snapshot becomes active."""
 
     data: dict[str, Any] = Field(default_factory=dict, description="Snapshot dictionary view.")
+
+
+class StorageStats(BasePayload):
+    """Filesystem usage snapshot emitted by the retention module."""
+
+    root: str = Field(description="Root directory being managed.")
+    total_gb: float = Field(ge=0.0)
+    used_gb: float = Field(ge=0.0)
+    free_gb: float = Field(ge=0.0)
+    usage_percent: float = Field(ge=0.0, le=100.0)
+    files_deleted: int = Field(default=0, ge=0)
+    aggressive: bool = Field(
+        default=False, description="Whether the last cleanup used the aggressive policy."
+    )
+    warning: bool = Field(
+        default=False,
+        description="True when disk space dropped below the configured threshold.",
+    )
+    artifacts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-directory artifact counts after the cleanup run.",
+    )

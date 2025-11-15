@@ -19,6 +19,9 @@ class FakePredictor:
             DetectionCandidate(label="person", confidence=0.9, bbox=(0, 0, 2, 2)),
         ]
 
+    def class_names(self) -> list[str]:
+        return ["person"]
+
 
 @pytest.mark.asyncio
 async def test_yolo_detector_emits_detections() -> None:
@@ -66,3 +69,23 @@ async def test_yolo_detector_emits_detections() -> None:
     await bus.stop()
 
     assert detections and detections[0].attributes["label"] == "person"
+
+
+@pytest.mark.asyncio
+async def test_yolo_detector_validates_alert_labels() -> None:
+    bus = EventBus(telemetry_enabled=False)
+    await bus.start()
+
+    module = YoloDetector(predictor_factory=lambda _: FakePredictor())
+    module.set_bus(bus)
+    await module.configure(
+        ModuleConfig(
+            options={
+                "alert_labels": ["person", "car"],
+            }
+        )
+    )
+
+    with pytest.raises(ValueError):
+        await module.start()
+    await bus.stop()

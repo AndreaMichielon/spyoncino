@@ -107,3 +107,31 @@ async def test_unauthorized_user_is_blocked_with_message() -> None:
 
     assert bus.published == []
     assert update.message.replies[-1] == "You are not authorized to control this system."
+
+
+@pytest.mark.asyncio
+async def test_cleanup_command_publishes_storage_request() -> None:
+    bot = TelegramControlBot()
+    bus = DummyBus()
+    bot.set_bus(bus)  # type: ignore[arg-type]
+    await bot.configure(
+        ModuleConfig(
+            options={
+                "token": "123:ABC",
+                "default_camera_id": "front",
+                "command_topic": "dashboard.control.command",
+                "user_whitelist": [7],
+            }
+        )
+    )
+
+    update = FakeUpdate(user_id=7)
+    context = FakeContext()
+
+    await bot._cmd_cleanup(update, context)
+
+    assert len(bus.published) == 1
+    topic, payload = bus.published[0]
+    assert topic == "dashboard.control.command"
+    assert payload.command == "storage.cleanup"
+    assert payload.camera_id is None

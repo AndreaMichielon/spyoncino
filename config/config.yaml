@@ -50,6 +50,8 @@ detection:
   # Person tracking
   person_cooldown_seconds: 30.0   # Seconds to wait before re-detecting same person
   bbox_overlap_threshold: 0.6     # Bounding box overlap for same person (0.0-1.0)
+  alert_labels:                   # YOLO labels that should trigger an alarm (validate against model classes)
+    - "person"
 
 # =============================================================================
 # DEDUPLICATION SETTINGS

@@ -20,9 +20,11 @@ from pathlib import Path
 from .core.config import ConfigError, ConfigService
 from .core.orchestrator import Orchestrator
 from .modules import (
+    AnalyticsEventLogger,
     CameraSimulator,
     ClipBuilder,
     ControlApi,
+    DetectionEventRouter,
     EventDeduplicator,
     GifBuilder,
     MotionDetector,
@@ -30,6 +32,7 @@ from .modules import (
     RateLimiter,
     RtspCamera,
     SnapshotWriter,
+    StorageRetention,
     TelegramControlBot,
     TelegramNotifier,
     UsbCamera,
@@ -48,6 +51,7 @@ MODULE_REGISTRY: dict[str, AbstractModule] = {
     "modules.input.rtsp_camera": RtspCamera,
     "modules.process.motion_detector": MotionDetector,
     "modules.process.yolo_detector": YoloDetector,
+    "modules.process.detection_event_router": DetectionEventRouter,
     "modules.event.deduplicator": EventDeduplicator,
     "modules.event.snapshot_writer": SnapshotWriter,
     "modules.event.gif_builder": GifBuilder,
@@ -58,6 +62,8 @@ MODULE_REGISTRY: dict[str, AbstractModule] = {
     "modules.dashboard.control_api": ControlApi,
     "modules.dashboard.telegram_bot": TelegramControlBot,
     "modules.status.prometheus_exporter": PrometheusExporter,
+    "modules.storage.retention": StorageRetention,
+    "modules.analytics.event_logger": AnalyticsEventLogger,
 }
 
 
@@ -68,6 +74,8 @@ MODULE_ALIASES: dict[str, str] = {
     "rtsp": "modules.input.rtsp_camera",
     "motion": "modules.process.motion_detector",
     "yolo": "modules.process.yolo_detector",
+    "alert-router": "modules.process.detection_event_router",
+    "person": "modules.process.detection_event_router",
     "dedupe": "modules.event.deduplicator",
     "snapshot": "modules.event.snapshot_writer",
     "gif": "modules.event.gif_builder",
@@ -78,6 +86,8 @@ MODULE_ALIASES: dict[str, str] = {
     "control-api": "modules.dashboard.control_api",
     "telegram-bot": "modules.dashboard.telegram_bot",
     "prom": "modules.status.prometheus_exporter",
+    "storage": "modules.storage.retention",
+    "analytics": "modules.analytics.event_logger",
 }
 
 
@@ -85,6 +95,8 @@ PIPELINE_PRESETS: dict[str, list[str]] = {
     "sim": [
         "modules.input.camera_simulator",
         "modules.process.motion_detector",
+        "modules.process.yolo_detector",
+        "modules.process.detection_event_router",
         "modules.event.deduplicator",
         "modules.process.zoning_filter",
         "modules.event.snapshot_writer",
@@ -95,11 +107,14 @@ PIPELINE_PRESETS: dict[str, list[str]] = {
         "modules.dashboard.control_api",
         "modules.dashboard.telegram_bot",
         "modules.status.prometheus_exporter",
+        "modules.storage.retention",
+        "modules.analytics.event_logger",
     ],
     "rtsp": [
         "modules.input.rtsp_camera",
         "modules.process.motion_detector",
         "modules.process.yolo_detector",
+        "modules.process.detection_event_router",
         "modules.event.deduplicator",
         "modules.process.zoning_filter",
         "modules.event.snapshot_writer",
@@ -110,10 +125,14 @@ PIPELINE_PRESETS: dict[str, list[str]] = {
         "modules.dashboard.control_api",
         "modules.dashboard.telegram_bot",
         "modules.status.prometheus_exporter",
+        "modules.storage.retention",
+        "modules.analytics.event_logger",
     ],
     "usb": [
         "modules.input.usb_camera",
         "modules.process.motion_detector",
+        "modules.process.yolo_detector",
+        "modules.process.detection_event_router",
         "modules.event.deduplicator",
         "modules.process.zoning_filter",
         "modules.event.snapshot_writer",
@@ -124,6 +143,8 @@ PIPELINE_PRESETS: dict[str, list[str]] = {
         "modules.dashboard.control_api",
         "modules.dashboard.telegram_bot",
         "modules.status.prometheus_exporter",
+        "modules.storage.retention",
+        "modules.analytics.event_logger",
     ],
 }
 

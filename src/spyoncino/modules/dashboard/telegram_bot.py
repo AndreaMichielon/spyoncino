@@ -13,7 +13,14 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from ...core.bus import Subscription
-from ...core.contracts import BaseModule, ControlCommand, HealthStatus, HealthSummary, ModuleConfig
+from ...core.contracts import (
+    BaseModule,
+    ControlCommand,
+    HealthStatus,
+    HealthSummary,
+    ModuleConfig,
+    StorageStats,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +72,12 @@ class TelegramControlBot(BaseModule):
         self._runner_task: asyncio.Task[None] | None = None
         self._shutdown_event: asyncio.Event | None = None
         self._health_subscription: Subscription | None = None
+        self._storage_subscription: Subscription | None = None
         self._health_topic = "status.health.summary"
+        self._storage_topic = "storage.stats"
         self._command_topic = "dashboard.control.command"
         self._last_health: HealthSummary | None = None
+        self._last_storage: StorageStats | None = None
         self._default_camera_id: str | None = None
         self._token: str | None = None
         self._user_whitelist: set[int] = set()
@@ -88,6 +98,7 @@ class TelegramControlBot(BaseModule):
         self._default_camera_id = options.get("default_camera_id", self._default_camera_id)
         self._command_topic = options.get("command_topic", self._command_topic)
         self._health_topic = options.get("health_topic", self._health_topic)
+        self._storage_topic = options.get("storage_topic", self._storage_topic)
         self._user_whitelist = {int(x) for x in options.get("user_whitelist", []) if x is not None}
         if options.get("superuser_id") is not None:
             self._superuser_id = int(options["superuser_id"])
@@ -125,12 +136,18 @@ class TelegramControlBot(BaseModule):
         self._health_subscription = self.bus.subscribe(
             self._health_topic, self._handle_health_event
         )
+        self._storage_subscription = self.bus.subscribe(
+            self._storage_topic, self._handle_storage_event
+        )
         logger.info("TelegramControlBot started.")
 
     async def stop(self) -> None:
         if self._health_subscription:
             self.bus.unsubscribe(self._health_subscription)
             self._health_subscription = None
+        if self._storage_subscription:
+            self.bus.unsubscribe(self._storage_subscription)
+            self._storage_subscription = None
         if self._shutdown_event:
             self._shutdown_event.set()
         if self._runner_task:
@@ -158,9 +175,11 @@ class TelegramControlBot(BaseModule):
             ("start", self._cmd_start),
             ("help", self._cmd_help),
             ("status", self._cmd_status),
+            ("stats", self._cmd_stats),
             ("enable", self._cmd_enable),
             ("disable", self._cmd_disable),
             ("snapshot", self._cmd_snapshot),
+            ("cleanup", self._cmd_cleanup),
             ("setup", self._cmd_setup),
             ("whoami", self._cmd_whoami),
         ]
@@ -191,6 +210,10 @@ class TelegramControlBot(BaseModule):
     async def _handle_health_event(self, topic: str, payload: HealthSummary) -> None:
         if isinstance(payload, HealthSummary):
             self._last_health = payload
+
+    async def _handle_storage_event(self, topic: str, payload: StorageStats) -> None:
+        if isinstance(payload, StorageStats):
+            self._last_storage = payload
 
     async def _cmd_start(self, update: Any, context: Any) -> None:
         if not await self._ensure_command_allowed(update, context):
@@ -227,6 +250,22 @@ class TelegramControlBot(BaseModule):
             lines.append(f"• {module}: {report.status}")
         await self._respond(update, "\n".join(lines))
 
+    async def _cmd_stats(self, update: Any, context: Any) -> None:
+        if not await self._ensure_command_allowed(update, context):
+            return
+        lines = []
+        if self._last_health:
+            lines.append(f"System status: {self._last_health.status.upper()}")
+        if self._last_storage:
+            storage = self._last_storage
+            lines.append(
+                f"Storage: {storage.used_gb:.2f}GB / {storage.total_gb:.2f}GB "
+                f"({storage.usage_percent:.1f}% used)"
+            )
+        if not lines:
+            lines.append("No telemetry received yet. Please try again soon.")
+        await self._respond(update, "\n".join(lines))
+
     async def _cmd_enable(self, update: Any, context: Any) -> None:
         await self._handle_camera_state(update, context, enabled=True)
 
@@ -244,6 +283,18 @@ class TelegramControlBot(BaseModule):
             ControlCommand(command="camera.snapshot", camera_id=camera_id, arguments={})
         )
         await self._respond(update, f"Snapshot requested for camera `{camera_id}`.")
+
+    async def _cmd_cleanup(self, update: Any, context: Any) -> None:
+        if not await self._ensure_command_allowed(update, context):
+            return
+        await self._publish_command(
+            ControlCommand(
+                command="storage.cleanup",
+                camera_id=None,
+                arguments={"mode": "aggressive"},
+            )
+        )
+        await self._respond(update, "Storage cleanup requested.")
 
     async def _cmd_setup(self, update: Any, context: Any) -> None:
         if self._user_whitelist and not await self._ensure_command_allowed(update, context):

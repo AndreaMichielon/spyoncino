@@ -34,12 +34,27 @@ def test_module_config_generation(sample_config_service: ConfigService) -> None:
     assert zoning_cfg.options["enabled"] is True
     assert zoning_cfg.options["zones"]
 
+    yolo_cfg = sample_config_service.module_config_for("modules.process.yolo_detector")
+    assert yolo_cfg.options["alert_labels"] == ["person"]
+
     control_api_cfg = sample_config_service.module_config_for("modules.dashboard.control_api")
     assert control_api_cfg.options["serve_api"] is False
 
     telegram_bot_cfg = sample_config_service.module_config_for("modules.dashboard.telegram_bot")
     assert telegram_bot_cfg.options["default_camera_id"] == "lab"
     assert telegram_bot_cfg.options["user_whitelist"] == [42]
+
+    alert_cfg = sample_config_service.module_config_for("modules.process.detection_event_router")
+    assert alert_cfg.options["input_topic"] == "process.yolo.detected"
+    assert alert_cfg.options["target_labels"] == ["person"]
+
+    storage_cfg = sample_config_service.module_config_for("modules.storage.retention")
+    assert storage_cfg.options["root_dir"]
+    assert storage_cfg.options["stats_topic"] == "storage.stats"
+
+    analytics_cfg = sample_config_service.module_config_for("modules.analytics.event_logger")
+    assert analytics_cfg.options["detection_topics"]
+    assert analytics_cfg.options["storage_topic"] == "storage.stats"
 
 
 def test_unknown_module_raises_error(sample_config_service: ConfigService) -> None:

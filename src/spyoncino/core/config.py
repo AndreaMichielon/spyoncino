@@ -75,6 +75,23 @@ class DetectionSettings(BaseModel):
     confidence: float = Field(default=0.25)
     model_path: str | None = Field(default=None)
     class_filter: list[str] = Field(default_factory=list)
+    person_cooldown_seconds: float = Field(default=30.0)
+    bbox_overlap_threshold: float = Field(default=0.6)
+    alert_labels: list[str] = Field(default_factory=lambda: ["person"])
+
+
+class AlertPipelineSettings(BaseModel):
+    """Settings for the detection router that enforces anti-spam rules."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    input_topic: str = Field(default="process.yolo.detected")
+    output_topic: str = Field(default="process.alert.detected")
+    target_labels: list[str] = Field(default_factory=lambda: ["person"])
+    min_confidence: float = Field(default=0.35)
+    cooldown_seconds: float = Field(default=30.0)
+    bbox_iou_threshold: float = Field(default=0.6)
+    timeout_seconds: float = Field(default=5.0)
 
 
 class DedupeSettings(BaseModel):
@@ -98,6 +115,17 @@ class StorageSettings(BaseModel):
     path: Path = Field(default_factory=lambda: _REPO_ROOT / "recordings")
     retention_hours: int = Field(default=24)
     aggressive_cleanup_hours: int = Field(default=12)
+    low_space_threshold_gb: float = Field(default=1.0, ge=0.0)
+    cleanup_interval_seconds: float = Field(default=600.0)
+    stats_topic: str = Field(default="storage.stats")
+    artifact_globs: list[str] = Field(
+        default_factory=lambda: [
+            "snapshots/*.png",
+            "snapshots/*.jpg",
+            "gifs/*.gif",
+            "clips/*.mp4",
+        ]
+    )
     snapshot_subdir: str = Field(default="snapshots")
     gif_subdir: str = Field(default="gifs")
     clip_subdir: str = Field(default="clips")
@@ -108,6 +136,13 @@ class StorageSettings(BaseModel):
         if isinstance(value, Path):
             return value
         return Path(value)
+
+    @field_validator("cleanup_interval_seconds")
+    @classmethod
+    def _positive_interval(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("cleanup_interval_seconds must be positive")
+        return value
 
     @property
     def snapshot_dir(self) -> Path:
@@ -137,6 +172,9 @@ class NotificationSettings(BaseModel):
     gif_for_person: bool = Field(default=True)
     gif_duration: float = Field(default=3.0)
     gif_fps: int = Field(default=10)
+    notification_gif_fps: int = Field(default=10)
+    max_gif_frames: int = Field(default=20)
+    max_file_size_mb: float = Field(default=50.0)
 
 
 class RateLimitSettings(BaseModel):
@@ -234,6 +272,20 @@ class AdvancedSettings(BaseModel):
 
     telegram_read_timeout: float = Field(default=30.0)
     telegram_write_timeout: float = Field(default=60.0)
+    analytics_figure_width: float = Field(default=22.0)
+    analytics_figure_height: float = Field(default=5.5)
+    analytics_intervals: list[int] = Field(default_factory=lambda: [5, 15, 60, 120])
+
+
+class AnalyticsSettings(BaseModel):
+    """Configuration for the analytics/event logging module."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    db_filename: str = Field(default="events.db")
+    detection_topics: list[str] = Field(default_factory=lambda: ["process.motion.unique"])
+    alert_topics: list[str] = Field(default_factory=lambda: ["process.alert.detected"])
+    storage_topic: str = Field(default="storage.stats")
 
 
 class TelegramSecrets(BaseModel):
@@ -315,6 +367,7 @@ class ConfigSnapshot(BaseModel):
 
     camera: CameraSettings = Field(default_factory=CameraSettings)
     detection: DetectionSettings = Field(default_factory=DetectionSettings)
+    alert_pipeline: AlertPipelineSettings = Field(default_factory=AlertPipelineSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
@@ -322,6 +375,7 @@ class ConfigSnapshot(BaseModel):
     zoning: ZoningSettings = Field(default_factory=ZoningSettings)
     clip: ClipSettings = Field(default_factory=ClipSettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
+    analytics: AnalyticsSettings = Field(default_factory=AnalyticsSettings)
     control_api: ControlApiSettings = Field(default_factory=ControlApiSettings)
     telegram: TelegramSecrets = Field(default_factory=TelegramSecrets)
     telegram_security: TelegramSecuritySettings = Field(default_factory=TelegramSecuritySettings)
@@ -381,7 +435,23 @@ class ConfigSnapshot(BaseModel):
                 options["model_path"] = self.detection.model_path
             if self.detection.class_filter:
                 options["class_filter"] = self.detection.class_filter
+            if self.detection.alert_labels:
+                options["alert_labels"] = self.detection.alert_labels
             return ModuleConfig(options=options)
+
+        def _detection_router_config() -> ModuleConfig:
+            target_labels = self.alert_pipeline.target_labels or self.detection.alert_labels
+            return ModuleConfig(
+                options={
+                    "input_topic": self.alert_pipeline.input_topic,
+                    "output_topic": self.alert_pipeline.output_topic,
+                    "target_labels": target_labels or ["person"],
+                    "min_confidence": self.alert_pipeline.min_confidence,
+                    "cooldown_seconds": self.alert_pipeline.cooldown_seconds,
+                    "bbox_iou_threshold": self.alert_pipeline.bbox_iou_threshold,
+                    "timeout_seconds": self.alert_pipeline.timeout_seconds,
+                }
+            )
 
         def _snapshot_writer_config() -> ModuleConfig:
             return ModuleConfig(
@@ -403,13 +473,19 @@ class ConfigSnapshot(BaseModel):
             )
 
         def _gif_builder_config() -> ModuleConfig:
+            detection_topic = (
+                self.alert_pipeline.output_topic
+                if self.notifications.gif_for_person
+                else self.dedupe.output_topic
+            )
             return ModuleConfig(
                 options={
                     "frame_topics": [self.camera.topic],
-                    "detection_topic": self.dedupe.output_topic,
+                    "detection_topic": detection_topic,
                     "output_dir": str(self.storage.gif_dir),
                     "fps": self.notifications.gif_fps,
                     "duration_seconds": self.notifications.gif_duration,
+                    "max_frames": self.notifications.max_gif_frames,
                 }
             )
 
@@ -501,12 +577,42 @@ class ConfigSnapshot(BaseModel):
                 }
             )
 
+        def _storage_retention_config() -> ModuleConfig:
+            return ModuleConfig(
+                options={
+                    "root_dir": str(self.storage.path),
+                    "retention_hours": self.storage.retention_hours,
+                    "aggressive_hours": self.storage.aggressive_cleanup_hours,
+                    "low_space_threshold_gb": self.storage.low_space_threshold_gb,
+                    "cleanup_interval_seconds": self.storage.cleanup_interval_seconds,
+                    "artifact_globs": self.storage.artifact_globs,
+                    "stats_topic": self.storage.stats_topic,
+                }
+            )
+
+        def _analytics_logger_config() -> ModuleConfig:
+            detection_topics = self.analytics.detection_topics or [self.dedupe.output_topic]
+            person_topics = self.analytics.alert_topics or [self.alert_pipeline.output_topic]
+            db_path = self.storage.path / self.analytics.db_filename
+            return ModuleConfig(
+                options={
+                    "db_path": str(db_path),
+                    "detection_topics": detection_topics,
+                    "person_topics": person_topics,
+                    "storage_topic": self.analytics.storage_topic,
+                    "figure_width": self.advanced.analytics_figure_width,
+                    "figure_height": self.advanced.analytics_figure_height,
+                    "analytics_intervals": self.advanced.analytics_intervals,
+                }
+            )
+
         builders: dict[str, Callable[[], ModuleConfig]] = {
             "modules.input.camera_simulator": _camera_sim_config,
             "modules.input.usb_camera": _usb_camera_config,
             "modules.input.rtsp_camera": _rtsp_camera_config,
             "modules.process.motion_detector": _motion_detector_config,
             "modules.process.yolo_detector": _yolo_detector_config,
+            "modules.process.detection_event_router": _detection_router_config,
             "modules.event.deduplicator": _deduplicator_config,
             "modules.event.snapshot_writer": _snapshot_writer_config,
             "modules.event.gif_builder": _gif_builder_config,
@@ -517,6 +623,8 @@ class ConfigSnapshot(BaseModel):
             "modules.status.prometheus_exporter": _prometheus_exporter_config,
             "modules.dashboard.control_api": _control_api_config,
             "modules.dashboard.telegram_bot": _telegram_control_bot_config,
+            "modules.storage.retention": _storage_retention_config,
+            "modules.analytics.event_logger": _analytics_logger_config,
         }
 
         try:
@@ -603,6 +711,7 @@ class ConfigService:
         data = {
             "camera": _section(raw, "camera"),
             "detection": _section(raw, "detection"),
+            "alert_pipeline": _section(raw, "alert_pipeline"),
             "dedupe": _section(raw, "dedupe"),
             "storage": _section(raw, "storage"),
             "notifications": _section(raw, "notifications"),
@@ -610,6 +719,7 @@ class ConfigService:
             "zoning": _section(raw, "zoning"),
             "clip": _section(raw, "clip"),
             "advanced": _section(raw, "advanced"),
+            "analytics": _section(raw, "analytics"),
             "control_api": _section(raw, "control_api"),
             "telegram": _section(raw, "telegram"),
             "telegram_security": _section(raw, "security"),
@@ -622,12 +732,15 @@ class ConfigService:
 
 __all__ = [
     "AdvancedSettings",
+    "AlertPipelineSettings",
+    "AnalyticsSettings",
     "CameraSettings",
     "ClipSettings",
     "ConfigError",
     "ConfigService",
     "ConfigSnapshot",
     "ControlApiSettings",
+    "DetectionSettings",
     "StorageSettings",
     "ZoneDefinition",
     "ZoningSettings",

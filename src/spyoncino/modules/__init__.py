@@ -4,6 +4,7 @@ Collection of modular Spyoncino components grouped by responsibility.
 Only a subset of modules are implemented for the initial migration phase.
 """
 
+from .analytics.event_logger import AnalyticsEventLogger
 from .dashboard.control_api import ControlApi
 from .dashboard.telegram_bot import TelegramControlBot
 from .event.clip_builder import ClipBuilder
@@ -15,15 +16,19 @@ from .input.rtsp_camera import RtspCamera
 from .input.usb_camera import UsbCamera
 from .output.rate_limiter import RateLimiter
 from .output.telegram_notifier import TelegramNotifier
+from .process.detection_event_router import DetectionEventRouter
 from .process.motion_detector import MotionDetector
 from .process.yolo_detector import YoloDetector
 from .process.zoning_filter import ZoningFilter
 from .status.prometheus_exporter import PrometheusExporter
+from .storage.retention import StorageRetention
 
 __all__ = [
+    "AnalyticsEventLogger",
     "CameraSimulator",
     "ClipBuilder",
     "ControlApi",
+    "DetectionEventRouter",
     "EventDeduplicator",
     "GifBuilder",
     "MotionDetector",
@@ -31,6 +36,7 @@ __all__ = [
     "RateLimiter",
     "RtspCamera",
     "SnapshotWriter",
+    "StorageRetention",
     "TelegramControlBot",
     "TelegramNotifier",
     "UsbCamera",
