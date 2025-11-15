@@ -6,9 +6,21 @@ Only a subset of modules are implemented for the initial migration phase.
 
 from .analytics.db_logger import AnalyticsDbLogger
 from .analytics.event_logger import AnalyticsEventLogger
-from .dashboard.control_api import ControlApi
-from .dashboard.telegram_bot import TelegramControlBot
-from .dashboard.websocket_gateway import WebsocketGateway
+
+try:  # pragma: no cover - optional dependency
+    from .dashboard.control_api import ControlApi
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    ControlApi = None
+
+try:  # pragma: no cover - optional dependency
+    from .dashboard.telegram_bot import TelegramControlBot
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    TelegramControlBot = None
+
+try:  # pragma: no cover - optional dependency
+    from .dashboard.websocket_gateway import WebsocketGateway
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    WebsocketGateway = None
 from .event.clip_builder import ClipBuilder
 from .event.deduplicator import EventDeduplicator
 from .event.gif_builder import GifBuilder

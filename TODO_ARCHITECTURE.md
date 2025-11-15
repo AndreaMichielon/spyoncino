@@ -104,7 +104,8 @@ src/spyoncino/
 
 - **Hierarchy:** default YAML → environment-specific YAML → environment variables → secrets store (`.env`, Docker secrets). Validate presence of required secrets at startup.
 - **Schemas:** each module ships a Pydantic config model used by `configure` to apply defaults, normalize units, and enforce limits.
-- **Camera arrays:** `config.yaml` now exposes a `cameras[]` list; the config service keeps backward compatibility with the legacy `camera` block while automatically instantiating an input module per entry (USB, RTSP, or simulator) and wiring downstream modules to every `camera.<id>.frame` topic.
+- **Camera arrays:** `config.yaml` exposes a `cameras[]` list; the config service keeps backward compatibility with the legacy `camera` block while automatically instantiating an input module per entry (USB, RTSP, or simulator) and wiring downstream modules to every `camera.<id>.frame` topic.
+- **Manifest layout:** Week 8 refactor collapses configuration into a small set of declarative sections (cameras, detection, storage, system, dashboards, outputs). Dashboards/outputs now declare multiple module instances via manifest lists, while detection encapsulates notification routing + media settings. Every tunable key carries inline documentation in `config.yaml`, making operator onboarding easier and ensuring third-party module authors share the same defaults.
 - **Update Workflow:** dashboards or APIs publish `config.update`; config service validates, persists (with versioning), broadcasts `config.snapshot`, or emits `ConfigRejected` on failure.
 
 ## Implementation Roadmap (8 Weeks)
@@ -136,7 +137,8 @@ src/spyoncino/
 | ✅ 5 | Advanced processing | Zoning filter, MP4 clip builder, FastAPI control API, config hot reload, contract fixtures | Checklist 3, 5, 8; Appendix A backpressure |
 | ✅ 6 | Modular parity & packaging | Orchestrator entrypoint + config wiring, storage/analytics modules, Telegram parity, motion/person pipeline extraction, Docker/compose packaging + load tests | Checklist 5-8; Implementation Status “Legacy parity”, “Media pipeline”, “Test suites” |
 | ✅ 7 | Persistence & resilience | S3 storage, database logging, WebSocket updates, graceful shutdown + rollback drills | Checklist 6-7, 9; Appendix B migration |
-| 8 | Production launch | systemd unit, production hardening checklist, HA validation, runbooks, exec sign-off | Checklist 7-9; Governance change management |
+| ✅ 8 | Module manifest config | Convert `config.yaml` into a module-centric manifest (outputs/dashboards arrays, per-module schemas, orchestrator wiring) | Config Strategy §6; Appendix B migration |
+| 9 | Production launch | systemd unit, production hardening checklist, HA validation, runbooks, exec sign-off | Checklist 7-9; Governance change management |
 
 #### Week 5 Delivery Notes
 
@@ -165,6 +167,15 @@ src/spyoncino/
 - **Documentation & Ops:** `docs/OPS_DASHBOARD.md` now covers S3 sync/discrepancy topics, websocket clients, and resilience drill monitoring.
 
 ### Week 8 Delivery Plan
+
+- **Module Manifest Centered Configuration**
+  - **Schema Extensions:** introduce `outputs[]`, `dashboards[]`, and other module instance lists in `config.yaml`, each entry specifying `module` + `options`. Add Pydantic models to `ConfigSnapshot` for structured validation and defaults. ✅ **Delivered** – manifests now drive dashboards/outputs, with nested notification/media sections and renamed storage subdirs.
+  - **Builder Refactor:** update `ConfigSnapshot.module_configs()` to iterate over the new manifests instead of hardcoded per-module builders, keeping backward-compatible fallbacks that synthesize entries from legacy sections during migration. ✅ **Delivered**
+  - **Module Migration:** move Telegram notifier/bot, email/webhook notifiers, and websocket gateway configuration into the manifest lists. Relocate per-module toggles from `advanced`/`notifications` (e.g., GIF/video knobs, routing choices) into the relevant entries. ✅ **Delivered**
+  - **Orchestrator Wiring & Tests:** ensure the orchestrator instantiates multiple module configs per name (beyond cameras), update presets, and expand unit tests/fixtures to exercise multi-output/multi-dashboard scenarios. ✅ **Delivered** (`tests/unit/test_config.py` exercises manifest/routing/renamed fields).
+  - **Documentation & Tooling:** refresh README + secrets examples to highlight the manifest layout, add upgrade guidance in Appendix B, and adjust helper scripts to mention the new structure. ⏳ **In progress** – inline config comments landed; README/Appendix updates pending.
+
+### Week 9 Delivery Plan
 
 - **Production Packaging:** wrap the modular stack with systemd units + docker-compose profiles, confirm graceful shutdown hooks integrate with OS-level signals, and document upgrade/rollback steps.
 - **HA Validation:** run failover + chaos suites (leveraging `resilience_tester`) under sustained load, capturing SLO dashboards plus `analytics.persistence.cursor` lag baselines.
@@ -249,9 +260,9 @@ src/spyoncino/
 |------|--------|-------|
 | Health aggregation loop | ✅ Complete | Orchestrator publishes `status.health.summary`. |
 | Dual-camera integration tests | ✅ Complete | `tests/unit/test_dual_camera_pipeline.py`. |
-| Test suites (unit/contract/integration/load) | ✅ Unit baseline | Bus + first-pipeline pytest coverage automated. |
+| Test suites (unit/contract/integration/load) | ✅ Unit baseline | Bus + first-pipeline pytest coverage automated. Updated config tests cover manifest, routing, renamed storage keys. |
 | Observability stack | ⏳ In progress | Prometheus + websocket gateway + resilience telemetry wired; structlog rollout pending. |
-| Documentation & migration guide | ⏳ In progress | Architecture doc tracks scope; README refresh pending. |
+| Documentation & migration guide | ⏳ In progress | Architecture doc tracks scope; README refresh pending. Config file now includes inline comments for every user-facing knob. |
 | Ops dashboard docs | ✅ Complete | `docs/OPS_DASHBOARD.md` outlines metrics & flows. |
 
 ### Legacy Parity (Week 6)

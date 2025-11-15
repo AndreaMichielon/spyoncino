@@ -92,21 +92,20 @@ class SecuritySystemRunner:
         except OSError as e:
             raise RuntimeError(f"Cannot read config file: {e}")
 
-        # Load telegram configuration (required)
-        if not self.telegram_path.exists():
-            raise FileNotFoundError(
-                f"Telegram configuration file not found: {self.telegram_path}\n"
-                f"Please create config/telegram.yaml based on the example."
+        # Load telegram configuration (optional - now typically embedded in config.yaml)
+        if self.telegram_path.exists():
+            try:
+                with open(self.telegram_path, encoding="utf-8") as f:
+                    telegram_config = yaml.safe_load(f) or {}
+                    config.update(telegram_config)
+            except yaml.YAMLError as e:
+                raise ValueError(f"Invalid YAML in telegram config file: {e}")
+            except OSError as e:
+                raise RuntimeError(f"Cannot read telegram config file: {e}")
+        else:
+            logging.getLogger(__name__).debug(
+                "config/telegram.yaml not found; assuming Telegram settings reside in config.yaml."
             )
-
-        try:
-            with open(self.telegram_path, encoding="utf-8") as f:
-                telegram_config = yaml.safe_load(f) or {}
-                config.update(telegram_config)
-        except yaml.YAMLError as e:
-            raise ValueError(f"Invalid YAML in telegram config file: {e}")
-        except OSError as e:
-            raise RuntimeError(f"Cannot read telegram config file: {e}")
 
         # Load secrets file (optional - fallback to env vars)
         if self.secrets_path.exists():

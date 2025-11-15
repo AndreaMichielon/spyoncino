@@ -295,7 +295,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--config-dir",
         type=Path,
         default=None,
-        help="Directory that contains config.yaml/telegram.yaml/secrets.yaml (default: repo config/).",
+        help="Directory that contains config.yaml/secrets.yaml (default: repo config/).",
     )
     parser.add_argument(
         "--preset",

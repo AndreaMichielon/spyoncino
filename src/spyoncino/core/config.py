@@ -168,9 +168,9 @@ class StorageSettings(BaseModel):
             "clips/*.mp4",
         ]
     )
-    snapshot_subdir: str = Field(default="snapshots")
+    snap_subdir: str = Field(default="snapshots")
     gif_subdir: str = Field(default="gifs")
-    clip_subdir: str = Field(default="clips")
+    video_subdir: str = Field(default="clips")
     s3: S3SyncSettings = Field(default_factory=lambda: S3SyncSettings())
 
     @field_validator("path", mode="before")
@@ -189,7 +189,7 @@ class StorageSettings(BaseModel):
 
     @property
     def snapshot_dir(self) -> Path:
-        return self.path / self.snapshot_subdir
+        return self.path / self.snap_subdir
 
     @property
     def gif_dir(self) -> Path:
@@ -197,7 +197,7 @@ class StorageSettings(BaseModel):
 
     @property
     def clip_dir(self) -> Path:
-        return self.path / self.clip_subdir
+        return self.path / self.video_subdir
 
     def ensure_directories(self) -> None:
         self.path.mkdir(parents=True, exist_ok=True)
@@ -236,18 +236,55 @@ class S3SyncSettings(BaseModel):
     remote_tracking_window_seconds: float = Field(default=3600.0, ge=60.0)
 
 
-class NotificationSettings(BaseModel):
-    """Notification preferences (GIFs, etc.)."""
+class SnapshotOutputSettings(BaseModel):
+    """Snapshot artifact overrides."""
 
     model_config = ConfigDict(extra="ignore")
 
-    gif_for_motion: bool = Field(default=False)
-    gif_for_person: bool = Field(default=True)
-    gif_duration: float = Field(default=3.0)
-    gif_fps: int = Field(default=10)
-    notification_gif_fps: int = Field(default=10)
-    max_gif_frames: int = Field(default=20)
+    width: int | None = Field(default=None)
+    height: int | None = Field(default=None)
+
+
+class GifOutputSettings(BaseModel):
+    """GIF artifact preferences."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    duration_seconds: float = Field(default=3.0)
+    fps: int = Field(default=15)
+    notification_fps: int = Field(default=10)
+    max_frames: int = Field(default=20)
     max_file_size_mb: float = Field(default=50.0)
+
+
+class VideoNotificationSettings(BaseModel):
+    """Video notification constraints."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    duration_seconds: float = Field(default=5.0)
+    fps: int = Field(default=12)
+    max_file_size_mb: float = Field(default=50.0)
+
+
+class NotificationSettings(BaseModel):
+    """Notification preferences (snap/gif/video routing)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    output_for_motion: Literal["text", "snap", "gif", "video", "none", None] = Field(default="text")
+    output_for_detection: Literal["text", "snap", "gif", "video", "none", None] = Field(
+        default="gif"
+    )
+    snap: SnapshotOutputSettings = Field(default_factory=SnapshotOutputSettings)
+    gif: GifOutputSettings = Field(default_factory=GifOutputSettings)
+    video: VideoNotificationSettings = Field(default_factory=VideoNotificationSettings)
+
+    def wants_motion_gif(self) -> bool:
+        return (self.output_for_motion or "").lower() == "gif"
+
+    def wants_detection_gif(self) -> bool:
+        return (self.output_for_detection or "").lower() == "gif"
 
 
 class RateLimitSettings(BaseModel):
@@ -489,6 +526,30 @@ class AuthenticationSettings(BaseModel):
             return []
 
 
+class ModuleManifestEntry(BaseModel):
+    """Declarative module entry derived from manifest lists (outputs/dashboards/etc.)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    module: str = Field(
+        description="Fully qualified module name, e.g. modules.output.telegram_notifier."
+    )
+    enabled: bool = Field(default=True)
+    camera_id: str | None = Field(
+        default=None, description="Optional camera binding for per-camera module instances."
+    )
+    options: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+
+    def to_module_config(self) -> ModuleConfig:
+        """Translate manifest entries into ModuleConfig objects consumed by modules."""
+
+        options = dict(self.options)
+        if self.camera_id and "camera_id" not in options:
+            options["camera_id"] = self.camera_id
+        return ModuleConfig(enabled=self.enabled, options=options)
+
+
 class ConfigSnapshot(BaseModel):
     """
     Validated, strongly typed view of the merged configuration.
@@ -520,6 +581,9 @@ class ConfigSnapshot(BaseModel):
     )
     authentication: AuthenticationSettings = Field(default_factory=AuthenticationSettings)
     resilience: ResilienceSettings = Field(default_factory=ResilienceSettings)
+    outputs: list[ModuleManifestEntry] = Field(default_factory=list)
+    dashboards: list[ModuleManifestEntry] = Field(default_factory=list)
+    modules: list[ModuleManifestEntry] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _ensure_cameras(self) -> ConfigSnapshot:
@@ -553,6 +617,14 @@ class ConfigSnapshot(BaseModel):
         self, module_name: str, *, camera_id: str | None = None
     ) -> list[ModuleConfig]:
         """Produce a ModuleConfig tailored for the requested module."""
+
+        manifest_configs = [
+            self._apply_manifest_defaults(module_name, entry.to_module_config())
+            for entry in self._manifest_entries(module_name)
+            if entry.enabled
+        ]
+        if manifest_configs:
+            return manifest_configs
 
         def _selected_cameras() -> list[CameraSettings]:
             if camera_id is None:
@@ -665,20 +737,25 @@ class ConfigSnapshot(BaseModel):
             )
 
         def _gif_builder_config() -> ModuleConfig:
+            gif_settings = self.notifications.gif
             detection_topic = (
                 self.alert_pipeline.output_topic
-                if self.notifications.gif_for_person
+                if self.notifications.wants_detection_gif()
                 else self.dedupe.output_topic
             )
+            enabled = (
+                self.notifications.wants_detection_gif() or self.notifications.wants_motion_gif()
+            )
             return ModuleConfig(
+                enabled=enabled,
                 options={
                     "frame_topics": self.camera_topics(),
                     "detection_topic": detection_topic,
                     "output_dir": str(self.storage.gif_dir),
-                    "fps": self.notifications.gif_fps,
-                    "duration_seconds": self.notifications.gif_duration,
-                    "max_frames": self.notifications.max_gif_frames,
-                }
+                    "fps": gif_settings.fps,
+                    "duration_seconds": gif_settings.duration_seconds,
+                    "max_frames": gif_settings.max_frames,
+                },
             )
 
         def _clip_builder_config() -> ModuleConfig:
@@ -904,6 +981,83 @@ class ConfigSnapshot(BaseModel):
             return result
         return [result]
 
+    def _manifest_entries(self, module_name: str) -> list[ModuleManifestEntry]:
+        """Return manifest-bound module entries for the requested module name."""
+
+        matches: list[ModuleManifestEntry] = []
+        for collection in (self.outputs, self.dashboards, self.modules):
+            matches.extend(entry for entry in collection if entry.module == module_name)
+        return matches
+
+    def _apply_manifest_defaults(self, module_name: str, config: ModuleConfig) -> ModuleConfig:
+        """Populate manifest-derived ModuleConfig with sane defaults."""
+
+        options = dict(config.options)
+
+        def _needs_resolution(value: Any) -> bool:
+            return isinstance(value, str) and value.startswith("@secrets")
+
+        if module_name == "modules.output.telegram_notifier":
+            if "token" not in options or _needs_resolution(options["token"]):
+                options["token"] = self.telegram.token
+            if options.get("token") is None:
+                raise ConfigError("Telegram notifier manifest entries require a bot token.")
+            chat_id = options.get("chat_id")
+            default_chat = self.telegram.chat_id or self.telegram_security.notification_chat_id
+            if chat_id is None or _needs_resolution(chat_id):
+                options["chat_id"] = default_chat
+            if options.get("chat_id") is None:
+                raise ConfigError("Telegram notifier manifest entries require a chat_id.")
+            options.setdefault("topic", self.rate_limit.output_topic)
+            options.setdefault("gif_topic", "event.gif.ready")
+            options.setdefault("clip_topic", "event.clip.ready")
+            options.setdefault("read_timeout", self.advanced.telegram_read_timeout)
+            options.setdefault("write_timeout", self.advanced.telegram_write_timeout)
+            options.setdefault("send_typing_action", self.telegram_behavior.send_typing_action)
+        elif module_name == "modules.output.rate_limiter":
+            options.setdefault("input_topic", self.rate_limit.input_topic)
+            options.setdefault("output_topic", self.rate_limit.output_topic)
+            options.setdefault("max_events", self.rate_limit.max_events)
+            options.setdefault("per_seconds", self.rate_limit.per_seconds)
+            options.setdefault("key_field", self.rate_limit.key_field)
+        elif module_name == "modules.dashboard.control_api":
+            options.setdefault("host", self.control_api.host)
+            options.setdefault("port", self.control_api.port)
+            options.setdefault("serve_api", self.control_api.serve_api)
+            options.setdefault("command_topic", self.control_api.command_topic)
+            options.setdefault("config_topic", self.control_api.config_topic)
+        elif module_name == "modules.dashboard.telegram_bot":
+            if "token" not in options or _needs_resolution(options["token"]):
+                options["token"] = self.telegram.token
+            options.setdefault("default_camera_id", self.camera.camera_id)
+            options.setdefault("command_topic", self.control_api.command_topic)
+            options.setdefault("health_topic", "status.health.summary")
+            whitelist = options.get("user_whitelist")
+            if whitelist is None or _needs_resolution(whitelist):
+                options["user_whitelist"] = self.authentication.user_whitelist
+            superuser = options.get("superuser_id")
+            if superuser is None or _needs_resolution(superuser):
+                options["superuser_id"] = self.authentication.superuser_id
+            setup_password = options.get("setup_password")
+            if setup_password is None or _needs_resolution(setup_password):
+                options["setup_password"] = self.authentication.setup_password
+            options.setdefault("allow_group_commands", self.telegram_security.allow_group_commands)
+            options.setdefault("silent_unauthorized", self.telegram_security.silent_unauthorized)
+            options.setdefault("command_rate_limit", self.telegram_rate_limiting.command_rate_limit)
+            options.setdefault("send_typing_action", self.telegram_behavior.send_typing_action)
+            options.setdefault("delete_old_menus", self.telegram_behavior.delete_old_menus)
+            options.setdefault("command_timeout", self.telegram_behavior.command_timeout)
+            options.setdefault("snapshot_timeout", self.telegram_behavior.snapshot_timeout)
+        elif module_name == "modules.dashboard.websocket_gateway":
+            options.setdefault("host", self.websocket_gateway.host)
+            options.setdefault("port", self.websocket_gateway.port)
+            options.setdefault("serve_http", self.websocket_gateway.serve_http)
+            options.setdefault("topics", self.websocket_gateway.topics)
+            options.setdefault("buffer_size", self.websocket_gateway.buffer_size)
+            options.setdefault("idle_timeout_seconds", self.websocket_gateway.idle_timeout_seconds)
+
+        return ModuleConfig(enabled=config.enabled, options=options)
+
 
 class ConfigService:
     """
@@ -992,27 +1146,57 @@ class ConfigService:
             raise ConfigError("Configuration validation failed") from exc
 
     def _extract_snapshot_data(self, raw: dict[str, Any]) -> dict[str, Any]:
+        detection_section = _section(raw, "detection")
+        system_section = _section(raw, "system")
+        outputs_section = _section(raw, "outputs")
+        dashboards_section = _section(raw, "dashboards")
+
+        def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+            if not override:
+                return dict(base)
+            merged = dict(base)
+            merged.update(override)
+            return merged
+
+        notifications_section = _section(detection_section, "notifications")
+        media_section = _section(detection_section, "media_artifacts")
+        clip_data = _merge(media_section, _section(raw, "media_artifacts"))
+        clip_data = _merge(clip_data, _section(raw, "clip"))
+
         data = {
             "camera": _section(raw, "camera"),
             "cameras": _section_list(raw, "cameras"),
-            "detection": _section(raw, "detection"),
-            "alert_pipeline": _section(raw, "alert_pipeline"),
-            "dedupe": _section(raw, "dedupe"),
+            "detection": detection_section,
+            "alert_pipeline": _merge(
+                _section(detection_section, "alert_pipeline"), _section(raw, "alert_pipeline")
+            ),
+            "dedupe": _merge(_section(detection_section, "dedupe"), _section(raw, "dedupe")),
             "storage": _section(raw, "storage"),
-            "notifications": _section(raw, "notifications"),
-            "rate_limit": _section(raw, "rate_limit"),
-            "zoning": _section(raw, "zoning"),
-            "clip": _section(raw, "clip"),
-            "advanced": _section(raw, "advanced"),
+            "notifications": _merge(notifications_section, _section(raw, "notifications")),
+            "rate_limit": _merge(
+                _section(outputs_section, "rate_limit"), _section(raw, "rate_limit")
+            ),
+            "zoning": _merge(_section(detection_section, "zoning"), _section(raw, "zoning")),
+            "clip": clip_data,
+            "advanced": _section(system_section, "advanced") or _section(raw, "advanced"),
             "analytics": _section(raw, "analytics"),
-            "control_api": _section(raw, "control_api"),
-            "websocket_gateway": _section(raw, "websocket_gateway"),
+            "control_api": _section(system_section, "control_api") or _section(raw, "control_api"),
+            "websocket_gateway": _merge(
+                _section(dashboards_section, "websocket_gateway"),
+                _section(raw, "websocket_gateway"),
+            ),
             "telegram": _section(raw, "telegram"),
-            "telegram_security": _section(raw, "security"),
-            "telegram_behavior": _section(raw, "behavior"),
-            "telegram_rate_limiting": _section(raw, "rate_limiting"),
-            "authentication": _section(raw, "authentication"),
-            "resilience": _section(raw, "resilience"),
+            "telegram_security": _section(system_section, "security") or _section(raw, "security"),
+            "telegram_behavior": _section(system_section, "behavior") or _section(raw, "behavior"),
+            "telegram_rate_limiting": _section(system_section, "rate_limiting")
+            or _section(raw, "rate_limiting"),
+            "authentication": _section(system_section, "authentication")
+            or _section(raw, "authentication"),
+            "resilience": _section(system_section, "resilience") or _section(raw, "resilience"),
+            "outputs": _section_list(outputs_section, "modules") or _section_list(raw, "outputs"),
+            "dashboards": _section_list(dashboards_section, "modules")
+            or _section_list(raw, "dashboards"),
+            "modules": _section_list(raw, "modules"),
         }
         return data
 
@@ -1028,6 +1212,7 @@ __all__ = [
     "ConfigSnapshot",
     "ControlApiSettings",
     "DetectionSettings",
+    "ModuleManifestEntry",
     "ResilienceScenarioSettings",
     "ResilienceSettings",
     "S3SyncSettings",

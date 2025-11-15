@@ -25,10 +25,12 @@ def test_module_config_generation(sample_config_service: ConfigService) -> None:
     telegram_cfg = sample_config_service.module_config_for("modules.output.telegram_notifier")
     assert telegram_cfg.options["token"] == "123:ABC"
     assert telegram_cfg.options["chat_id"] == 654321
+    assert telegram_cfg.options["topic"] == "event.snapshot.allowed"
 
     clip_cfg = sample_config_service.module_config_for("modules.event.clip_builder")
     assert clip_cfg.options["enabled"] is True
     assert clip_cfg.options["output_topic"] == "event.clip.ready"
+    assert clip_cfg.options["frame_topics"] == ["camera.lab.frame"]
 
     zoning_cfg = sample_config_service.module_config_for("modules.process.zoning_filter")
     assert zoning_cfg.options["enabled"] is True
@@ -96,6 +98,13 @@ def test_motion_detector_receives_all_camera_topics(sample_config_service: Confi
     motion_cfg = sample_config_service.module_config_for("modules.process.motion_detector")
     assert motion_cfg.options["input_topics"] == ["camera.lab.frame"]
     assert motion_cfg.options["input_topic"] == "camera.lab.frame"
+
+
+def test_manifest_multi_instance_outputs(sample_config_service: ConfigService) -> None:
+    configs = sample_config_service.module_configs_for("modules.output.telegram_notifier")
+    assert len(configs) == 2
+    chat_ids = sorted(cfg.options["chat_id"] for cfg in configs)
+    assert chat_ids == [654321, 777777]
 
 
 def test_camera_simulator_config_falls_back_when_width_missing(

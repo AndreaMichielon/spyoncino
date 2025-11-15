@@ -1,159 +1,197 @@
 # =============================================================================
-# SPYONCINO CONFIGURATION
+# SPYONCINO CONFIGURATION (MANIFEST SIMPLIFIED)
 # =============================================================================
-# AI-powered security system with motion detection and person recognition
-#
-# This file contains general system settings, camera configuration,
-# detection parameters, and storage options.
-#
-# For Telegram bot settings, see telegram.yaml
-# For sensitive credentials, see secrets.yaml (never commit this file!)
+# - Sections mirror the modular architecture (cameras, detection, storage, system,
+#   dashboards, outputs). Every module derives its config from these blocks.
+# - All parameters that operators may tune include inline comments explaining
+#   purpose, units, and valid values.
+# - Use `@secrets path.to.value` to reference sensitive data from secrets.yaml.
 # =============================================================================
 
 # =============================================================================
-# CAMERA SETTINGS
+# CAMERAS
 # =============================================================================
-# Configure one or more camera input sources. Each entry becomes its own input module.
 cameras:
-  - camera_id: "default"           # Logical identifier used for bus topics
-    # Source identification
-    usb_port: 0                    # Camera device index (0, 1, 2...) or video file path
-    rtsp_url: null                 # Optional RTSP endpoint (set to actual URL to enable)
-
-    # Video resolution (set to null to keep the native feed)
-    width: 1280                    # Camera width in pixels; if height=null we keep the native aspect ratio
-    height: 720                    # Camera height in pixels; if width=null we keep the native aspect ratio
-    fps: 15                        # Frames per second; null = driver-controlled (no artificial delay)
-
-#   - camera_id: "garage"          # Example second camera (uncomment + edit to enable)
-#     usb_port: 1
-#     rtsp_url: null
-#     width: null
-#     height: null
-#     fps: null
-#     notes: "Custom camera wired via multi-camera pipeline"
+  - camera_id: "default"        # Logical ID used in bus topics (camera.<id>.frame)
+    usb_port: 0                 # USB index or file path; set `rtsp_url` for network cams
+    rtsp_url: null              # Example: rtsp://user:pass@host/stream (null disables RTSP)
+    width: 1280                 # Set to null to keep native width
+    height: 720                 # Set to null to keep native height
+    fps: 15                     # Frames per second; null lets the driver decide
+    interval_seconds: 1.0       # Capture interval for simulator/throttled inputs
 
 # =============================================================================
-# DETECTION SETTINGS
+# DETECTION (motion, YOLO, dedupe, zoning, media artifacts)
 # =============================================================================
-# Configure motion detection and AI person recognition
 detection:
-  # Timing
-  interval: 2.0                   # Seconds between detection checks (lower = more frequent)
-  record_frames: 50               # Number of frames to capture per detection event
+  interval: 2.0                  # Seconds between motion-processing batches
+  record_frames: 50              # Frames cached per detection for GIF/clip builders
+  confidence: 0.25               # YOLO confidence threshold (0-1)
+  model_path: "config/yolov8n.pt"  # Path to Ultralytics model weights
+  class_filter: []               # Optional list of class names to keep (empty = all)
+  motion_threshold: 5            # Pixel delta threshold for basic motion detector
+  label_cooldown_seconds: 30.0   # Prevent duplicate alerts for the same label
+  bbox_overlap_threshold: 0.6    # IOU merge threshold for dedupe logic
+  alert_labels:
+    - "person"                   # YOLO classes that should trigger alert routing
 
-  # AI/YOLO settings
-  confidence: 0.25                # AI confidence threshold (0.1-0.9, lower = more sensitive)
-  model_path: "config/yolov8n.pt" # Path to YOLO weights
-  class_filter: []                # Optional class names to keep (empty = allow all)
-  max_batch_size: 32              # Maximum frames processed per YOLO batch (GPU memory)
+  alert_pipeline:
+    input_topic: "process.yolo.detected"    # Source detections to feed into the pipeline
+    output_topic: "process.alert.detected"  # Topic for deduped/high-confidence alerts
+    target_labels:
+      - "person"                 # Labels to treat as “person-level” alerts
+    min_confidence: 0.35         # Minimum confidence to forward into the alert topic
+    cooldown_seconds: 30.0       # Anti-spam cooldown per camera/label
+    bbox_iou_threshold: 0.6      # Merge detections seen as the same object
+    timeout_seconds: 5.0         # Wait for detections before declaring silence
 
-  # Motion detection
-  motion_threshold: 5             # Pixel change threshold for motion (1-100, lower = more sensitive)
+  dedupe:
+    input_topic: "process.motion.detected"  # Raw detections to deduplicate
+    output_topic: "process.motion.unique"   # Topic after dedupe
+    window_seconds: 2.0            # Detections inside this window collapse together
+    key_fields:
+      - "camera_id"                # Fields used to build the dedupe signature
+      - "detector_id"
+      - "attributes.label"
 
-  # Detection tracking
-  label_cooldown_seconds: 30.0    # Seconds to wait before re-detecting the same alert label
-  bbox_overlap_threshold: 0.6     # Bounding box overlap for same person (0.0-1.0)
-  alert_labels:                   # YOLO labels that should trigger an alarm (validate against model classes)
-    - "person"
+  zoning:
+    enabled: false                 # Enable include/exclude zones on detections
+    input_topic: "process.motion.unique"   # Source detections to zone-filter
+    output_topic: "process.motion.zoned"   # Topic for detections that pass zone rules
+    unmatched_topic: null          # Optional topic for detections outside zones
+    drop_outside: false            # True = drop detections not matching include zones
+    frame_width: 1280              # Reference width for zone coordinate normalization
+    frame_height: 720              # Reference height for zone coordinate normalization
+    zones: []                      # Example: [{camera_id: "default", zone_id: "door", bounds: [0,0,0.6,1]}]
+
+  notifications:
+    output_for_motion: "text"      # null/text/snap/gif/video – what to send on motion-only events
+    output_for_detection: "gif"    # null/text/snap/gif/video – what to send on person/object events
+
+    snap:
+      width: 1280                  # Override snapshot width (null reuses camera width)
+      height: 720                  # Override snapshot height (null reuses camera height)
+
+    gif:
+      duration_seconds: 3          # Seconds captured per GIF
+      fps: 15                      # GIF playback FPS
+      notification_fps: 10         # Telegram transfer fps to keep payloads small
+      max_frames: 20               # Max frames per GIF
+      max_file_size_mb: 50.0       # Upper bound for GIF payload size
+
+    video:
+      duration_seconds: 5.0        # Seconds captured per clip when sent via notifier
+      fps: 12                      # Clip FPS when sharing via notifier
+      max_file_size_mb: 50.0       # Upper bound for clip payload size
+
+  media_artifacts:
+    enabled: true                  # Disable to skip clip generation entirely
+    detection_topic: "process.motion.unique"   # Source detections to clip around
+    output_topic: "event.clip.ready"           # Bus topic for finished MP4s
+    duration_seconds: 5.0          # Clip length (seconds before/after detection)
+    fps: 12                        # Clip FPS for on-disk output
+    max_artifacts: 25              # How many clips to retain on disk before pruning
 
 # =============================================================================
-# DEDUPLICATION SETTINGS
+# STORAGE
 # =============================================================================
-dedupe:
-  input_topic: "process.motion.detected"
-  output_topic: "process.motion.unique"
-  window_seconds: 2.0
-  key_fields:
-    - "camera_id"
-    - "detector_id"
-    - "attributes.label"
-
-# =============================================================================
-# STORAGE SETTINGS
-# =============================================================================
-# Configure where and how long recordings are stored
 storage:
-  # Paths
-  path: "recordings"              # Directory for recordings, GIFs, and logs
-  snapshot_subdir: "snapshots"
-  gif_subdir: "gifs"
-
-  # Retention policy
-  retention_hours: 24             # Hours to keep recordings before auto-deletion
-  aggressive_cleanup_hours: 12    # Hours to keep when disk space is low
-
-  # Disk space management
-  low_space_threshold_gb: 1.0     # Trigger aggressive cleanup below this free space (GB)
-
-# =============================================================================
-# NOTIFICATION SETTINGS
-# =============================================================================
-# Configure GIF generation and notification behavior
-notifications:
-  # GIF generation
-  gif_for_motion: false           # Generate GIF for motion-only events (no person)
-  gif_for_person: true            # Generate GIF for person detection events
-
-  # GIF quality settings
-  gif_duration: 3                 # Duration of GIF in seconds
-  gif_fps: 15                     # FPS for internal GIF generation
-  notification_gif_fps: 10        # FPS for Telegram GIF (lower = smaller file)
-  max_gif_frames: 20              # Maximum frames per GIF
-  max_file_size_mb: 50.0          # Maximum GIF file size for Telegram (MB)
+  path: "recordings"               # Root directory for all artifacts/logs
+  snap_subdir: "snapshots"         # Relative folder for still images
+  gif_subdir: "gifs"               # Relative folder for GIFs
+  video_subdir: "clips"            # Relative folder for MP4 clips
+  retention_hours: 24              # Standard cleanup horizon
+  aggressive_cleanup_hours: 12     # Used when disk space drops below threshold
+  low_space_threshold_gb: 1.0      # Trigger aggressive cleanup below this free space
+  s3:
+    enabled: false                 # Enable to mirror artifacts to S3-compatible storage
+    bucket: null                   # Destination bucket name
+    region_name: null              # AWS region (if using AWS)
+    prefix: ""                     # Optional key prefix per artifact
+    publish_topic: "storage.s3.synced"      # Topic for successful uploads
+    discrepancy_topic: "storage.discrepancy"  # Topic for drift reports
 
 # =============================================================================
-# RATE LIMIT SETTINGS
+# SYSTEM (logging, bot defaults, control surfaces, resilience)
 # =============================================================================
-rate_limit:
-  input_topic: "event.snapshot.ready"
-  output_topic: "event.snapshot.allowed"
-  max_events: 5
-  per_seconds: 60
-  key_field: "camera_id"
-
-# =============================================================================
-# SYSTEM SETTINGS
-# =============================================================================
-# Configure logging, monitoring, and system behavior
 system:
-  # Monitoring
-  check_interval: 5.0             # Seconds between system health checks
-
-  # Logging
-  log_level: "INFO"               # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-  log_format: "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
-  log_max_size_mb: 10             # Maximum log file size before rotation (MB)
-  log_backup_count: 3             # Number of backup log files to keep
+  monitoring:
+    check_interval: 5.0            # Seconds between orchestrator self-checks
+  logging:
+    log_level: "INFO"              # Root logging level
+    log_format: "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+    log_max_size_mb: 10            # Rotating file max size (MB)
+    log_backup_count: 3            # Number of rotated log files to keep
+  advanced:
+    analytics_figure_width: 22     # Legacy chart width (inches)
+    analytics_figure_height: 5.5   # Legacy chart height (inches)
+    analytics_intervals:           # Minute-based histogram buckets for analytics
+      - 5
+      - 15
+      - 60
+      - 120
+  security:
+    notification_chat_id: null     # Force notifications into a specific chat ID
+    allow_group_commands: true     # Permit bot commands from groups
+    silent_unauthorized: true      # Drop responses when user isn’t authorized
+  rate_limiting:
+    notification_rate_limit: 5     # Notifications per minute (global)
+    command_rate_limit: 10         # Bot commands per minute per user
+    failed_auth_lockout: 300       # Seconds to lock users after auth failures
+  behavior:
+    send_typing_action: true       # Show Telegram “typing…” while processing commands
+    delete_old_menus: true         # Auto-clean inline keyboards
+    command_timeout: 30            # Seconds to wait for command completion
+    snapshot_timeout: 10           # Seconds to wait for /snapshot replies
+    enable_analytics: true         # Whether bot exposes analytics commands
+    enable_recordings_browser: true  # Allow browsing recordings via bot
+  resilience:
+    enabled: false                 # Enable to allow chaos scenarios via control surface
+    scenarios: []                  # Define latency/drop injections here
+  control_api: &control_api_defaults
+    host: "0.0.0.0"                # FastAPI bind address
+    port: 8080
+    serve_api: true
+    command_topic: "dashboard.control.command"  # Topic for orchestrator commands
+    config_topic: "config.update"               # Hot-reload topic
 
 # =============================================================================
-# ADVANCED SETTINGS
+# DASHBOARDS (manifests + streaming settings)
 # =============================================================================
-# Internal parameters - only change if you know what you're doing
-advanced:
-  # AI/GPU optimization
-  yolo_warmup_size: 224           # Dummy frame size for YOLO warmup (pixels)
-  gpu_memory_reserve: 0.2         # Fraction of GPU memory to keep free (0.0-1.0)
+dashboards:
+  websocket_gateway:
+    host: "0.0.0.0"                # Websocket gateway bind address (0.0.0.0 = all interfaces)
+    port: 8765                     # Websocket port exposed to clients
+    serve_http: true               # Toggle HTTP long-poll fallback
+    topics:
+      - "status.health.summary"    # Which topics should be streamed to clients
+      - "status.bus"
+      - "analytics.persistence.cursor"
+      - "storage.stats"
+    buffer_size: 256               # Max buffered events per connection
+    idle_timeout_seconds: 30       # Close connection if idle for this many seconds
+  modules:
+    - module: modules.dashboard.control_api      # Run the FastAPI control plane
+    - module: modules.dashboard.websocket_gateway  # Run the websocket streaming module
+    - module: modules.dashboard.telegram_bot       # Run the Telegram control bot
 
-  # GIF processing
-  gif_max_dimension: 640          # Maximum width/height for GIF frames (pixels)
-  gif_worker_threads: 2           # Number of parallel GIF generation threads
-
-  # Background subtraction
-  bg_detect_shadows: true         # Enable shadow detection in motion detection
-
-  # Telegram timeouts
-  telegram_read_timeout: 30       # Read timeout for Telegram operations (seconds)
-  telegram_write_timeout: 60      # Write timeout for Telegram file uploads (seconds)
-
-  # Analytics
-  analytics_figure_width: 22      # Analytics chart width (inches)
-  analytics_figure_height: 5.5    # Analytics chart height (inches)
-  analytics_intervals:            # Time binning for analytics (minutes)
-    - 5     # For 0-6 hours
-    - 15    # For 6-24 hours
-    - 60    # For 24-72 hours
-    - 120   # For 72+ hours
-
-  # UI overlay scaling
-  ui_scale_base: 320              # Base resolution for UI scaling calculations
+# =============================================================================
+# OUTPUTS (rate limiter + notifier manifests)
+# =============================================================================
+outputs:
+  rate_limit:
+    input_topic: "event.snapshot.ready"   # Topic whose events should be throttled
+    output_topic: "event.snapshot.allowed"  # Topic to publish when events pass throttle
+    max_events: 5                          # Allowed events per window
+    per_seconds: 60                        # Window size (seconds)
+    key_field: "camera_id"                 # Apply throttle separately per this field
+  modules:
+    - module: modules.output.telegram_notifier   # Primary Telegram notifier
+    - module: modules.output.telegram_notifier   # Optional backup notifier (disabled)
+      enabled: false
+      options:
+        message_template: "Backup notifier - motion on {camera_id}"
+    - module: modules.output.email_notifier      # Email notifier (disabled by default)
+      enabled: false
+    - module: modules.output.webhook_notifier    # Webhook notifier (disabled by default)
+      enabled: false

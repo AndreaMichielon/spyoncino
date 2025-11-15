@@ -276,8 +276,8 @@ General system settings organized by category:
 | `gif_fps` | `15` | Internal GIF quality |
 | `notification_gif_fps` | `10` | Telegram GIF quality |
 
-### config/telegram.yaml (Safe to commit)
-Telegram bot and security settings:
+### Telegram bot settings (inside `config/config.yaml`)
+Telegram bot and security settings now live alongside the rest of the system configuration:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -381,7 +381,7 @@ ls /dev/video*  # Linux - list cameras
 **Maintenance:**
 - Monitor storage usage
 - Update dependencies: `uv pip install --upgrade -e .`
-- Backup `config/config.yaml` and `config/telegram.yaml` only (never commit `secrets.yaml`)
+- Backup `config/config.yaml` (Telegram settings are inside) and never commit `config/secrets.yaml`
 
 ## Technical Details
 

@@ -229,7 +229,7 @@ echo
 # ========================================
 echo "[5/5] Starting Spyoncino Security System..."
 echo
-echo "TIP: Edit config/config.yaml, config/telegram.yaml, and config/secrets.yaml"
+echo "TIP: Edit config/config.yaml and config/secrets.yaml"
 echo "Press Ctrl+C to stop the system"
 echo "========================================"
 echo
