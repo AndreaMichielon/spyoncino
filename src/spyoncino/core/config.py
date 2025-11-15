@@ -9,7 +9,7 @@ modules without hand-written dictionaries.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -348,6 +348,75 @@ class ZoningSettings(BaseModel):
     frame_width: int = Field(default=640)
     frame_height: int = Field(default=480)
     zones: list[ZoneDefinition] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_zones(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("zones")
+        data["zones"] = cls._flatten_zone_definitions(raw)
+        return data
+
+    @staticmethod
+    def _flatten_zone_definitions(raw: Any) -> list[dict[str, Any]]:
+        """
+        Accepts multiple shorthand formats for zones and returns a list of plain zone dicts.
+        Supported shorthands:
+          1. List of {camera_id, zones: {zone_id: {...}}}
+          2. Dict camera_id -> {zone_id: {...}}
+          3. Values where zone body is just a bounds list [x1, y1, x2, y2]
+        """
+
+        def _normalize_bounds(value: Any) -> tuple[float, float, float, float] | None:
+            if isinstance(value, Sequence) and len(value) == 4:
+                try:
+                    return tuple(float(v) for v in value)  # type: ignore[return-value]
+                except (TypeError, ValueError):
+                    return None
+            return None
+
+        def _expand_zone_map(camera_id: str, zone_map: Any) -> list[dict[str, Any]]:
+            if not isinstance(zone_map, dict):
+                return []
+            result: list[dict[str, Any]] = []
+            for zone_id, zone_data in zone_map.items():
+                if zone_data is None:
+                    continue
+                entry: dict[str, Any] = {
+                    "camera_id": camera_id,
+                    "zone_id": str(zone_id),
+                }
+                bounds = _normalize_bounds(zone_data)
+                if bounds is not None:
+                    entry["bounds"] = bounds
+                elif isinstance(zone_data, dict):
+                    entry.update(zone_data)
+                else:
+                    continue
+                result.append(entry)
+            return result
+
+        if raw is None:
+            return []
+        flattened: list[dict[str, Any]] = []
+        if isinstance(raw, dict):
+            for camera_id, zone_map in raw.items():
+                flattened.extend(_expand_zone_map(str(camera_id), zone_map))
+            return flattened
+        if isinstance(raw, list):
+            for entry in raw:
+                if (
+                    isinstance(entry, dict)
+                    and "zones" in entry
+                    and not isinstance(entry.get("zone_id"), str)
+                ):
+                    camera_id = str(entry.get("camera_id") or "default")
+                    flattened.extend(_expand_zone_map(camera_id, entry.get("zones")))
+                elif isinstance(entry, dict):
+                    flattened.append(entry)
+            return flattened
+        return []
 
 
 class ClipSettings(BaseModel):
@@ -773,6 +842,13 @@ class ConfigSnapshot(BaseModel):
             )
 
         def _zoning_filter_config() -> ModuleConfig:
+            camera_dimensions = {
+                camera.camera_id: {
+                    "width": camera.resolved_dimensions()[0],
+                    "height": camera.resolved_dimensions()[1],
+                }
+                for camera in self.cameras
+            }
             return ModuleConfig(
                 options={
                     "enabled": self.zoning.enabled,
@@ -782,6 +858,7 @@ class ConfigSnapshot(BaseModel):
                     "drop_outside": self.zoning.drop_outside,
                     "frame_width": self.zoning.frame_width,
                     "frame_height": self.zoning.frame_height,
+                    "camera_dimensions": camera_dimensions,
                     "zones": [zone.model_dump() for zone in self.zoning.zones],
                 }
             )

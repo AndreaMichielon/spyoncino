@@ -35,6 +35,7 @@ def test_module_config_generation(sample_config_service: ConfigService) -> None:
     zoning_cfg = sample_config_service.module_config_for("modules.process.zoning_filter")
     assert zoning_cfg.options["enabled"] is True
     assert zoning_cfg.options["zones"]
+    assert zoning_cfg.options["camera_dimensions"]["lab"] == {"width": 64, "height": 48}
 
     yolo_cfg = sample_config_service.module_config_for("modules.process.yolo_detector")
     assert yolo_cfg.options["alert_labels"] == ["person"]
@@ -74,6 +75,32 @@ def test_module_config_generation(sample_config_service: ConfigService) -> None:
     resilience_cfg = sample_config_service.module_config_for("modules.status.resilience_tester")
     assert resilience_cfg.options["enabled"] is True
     assert resilience_cfg.options["scenarios"][0]["name"] == "delay-alerts"
+
+
+def test_zoning_settings_accepts_grouped_definitions(sample_config_service: ConfigService) -> None:
+    snapshot = sample_config_service.apply_changes(
+        {
+            "zoning": {
+                "zones": [
+                    {
+                        "camera_id": "garage",
+                        "zones": {
+                            "door": {
+                                "bounds": [0.0, 0.0, 0.5, 0.5],
+                                "labels": ["person"],
+                                "action": "include",
+                            },
+                            "outside": [0.5, 0.5, 1.0, 1.0],
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    assert len(snapshot.zoning.zones) == 2
+    zone_ids = sorted(zone.zone_id for zone in snapshot.zoning.zones)
+    assert zone_ids == ["door", "outside"]
+    assert snapshot.zoning.zones[1].bounds == (0.5, 0.5, 1.0, 1.0)
 
 
 def test_unknown_module_raises_error(sample_config_service: ConfigService) -> None:

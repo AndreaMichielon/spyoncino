@@ -51,6 +51,7 @@ class ZoningFilter(BaseModule):
         self._frame_height = 480
         self._zones: list[ZoneRule] = []
         self._subscriptions: list[Subscription] = []
+        self._camera_dimensions: dict[str, tuple[int, int]] = {}
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -62,6 +63,7 @@ class ZoningFilter(BaseModule):
         self._drop_outside = bool(options.get("drop_outside", self._drop_outside))
         self._frame_width = int(options.get("frame_width", self._frame_width))
         self._frame_height = int(options.get("frame_height", self._frame_height))
+        self._camera_dimensions = self._parse_camera_dimensions(options.get("camera_dimensions"))
         raw_zones: Sequence[dict[str, object]] = options.get("zones", []) or []
         self._zones = [self._compile_zone(entry) for entry in raw_zones]
 
@@ -134,9 +136,9 @@ class ZoningFilter(BaseModule):
             return None
         x1, y1, x2, y2 = (float(value) for value in raw_bbox)
         frame_meta = payload.attributes.get("frame") or {}
-        width = float(frame_meta.get("width") or self._frame_width)
-        height = float(frame_meta.get("height") or self._frame_height)
-        if width <= 0 or height <= 0:
+        width = self._resolve_dimension(frame_meta.get("width"), payload.camera_id, axis="width")
+        height = self._resolve_dimension(frame_meta.get("height"), payload.camera_id, axis="height")
+        if width is None or height is None or width <= 0 or height <= 0:
             return None
         cx = ((x1 + x2) / 2) / width
         cy = ((y1 + y2) / 2) / height
@@ -176,6 +178,42 @@ class ZoningFilter(BaseModule):
             frame_width=frame_width,
             frame_height=frame_height,
         )
+
+    def _parse_camera_dimensions(self, raw: object) -> dict[str, tuple[int, int]]:
+        if not isinstance(raw, dict):
+            return {}
+        result: dict[str, tuple[int, int]] = {}
+        for camera_id, dims in raw.items():
+            if not isinstance(dims, dict):
+                continue
+            width = dims.get("width")
+            height = dims.get("height")
+            try:
+                w = int(width)
+                h = int(height)
+            except (TypeError, ValueError):
+                continue
+            if w > 0 and h > 0:
+                result[str(camera_id)] = (w, h)
+        return result
+
+    def _resolve_dimension(self, value: object, camera_id: str, *, axis: str) -> float | None:
+        try:
+            resolved = float(value) if value is not None else None
+        except (TypeError, ValueError):
+            resolved = None
+        if resolved and resolved > 0:
+            return resolved
+        camera_dims = self._camera_dimensions.get(camera_id)
+        if camera_dims:
+            index = 0 if axis == "width" else 1
+            fallback = camera_dims[index]
+            if fallback > 0:
+                return float(fallback)
+        fallback = self._frame_width if axis == "width" else self._frame_height
+        if fallback > 0:
+            return float(fallback)
+        return None
 
 
 __all__ = ["ZoningFilter"]

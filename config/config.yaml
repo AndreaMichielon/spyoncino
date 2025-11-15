@@ -62,7 +62,16 @@ detection:
     drop_outside: false            # True = drop detections not matching include zones
     frame_width: 1280              # Reference width for zone coordinate normalization
     frame_height: 720              # Reference height for zone coordinate normalization
-    zones: []                      # Example: [{camera_id: "default", zone_id: "door", bounds: [0,0,0.6,1]}]
+    zones:                       # Top-level list; set to null to disable zoning
+      - camera_id: "default"     # Camera the nested zones apply to
+        zones: null              # Null = no zones for this camera (acts as disabled zoning)
+    # Example structure when enabling zones:
+    # - camera_id: "default"      # Camera that owns the zone definitions
+    #   zones:
+    #     door:                   # Zone identifier (unique per camera)
+    #       bounds: [0.0, 0.0, 0.6, 1.0]  # Normalized [x1,y1,x2,y2] covering 0-1 space
+    #       labels: ["person"]    # Optional list restricting which labels trigger the zone
+    #       action: "include"     # include|exclude (default include); exclude blocks events
 
   notifications:
     output_for_motion: "text"      # null/text/snap/gif/video – what to send on motion-only events
@@ -119,7 +128,7 @@ system:
     check_interval: 5.0            # Seconds between orchestrator self-checks
   logging:
     log_level: "INFO"              # Root logging level
-    log_format: "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+    log_format: "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"  # Log line format
     log_max_size_mb: 10            # Rotating file max size (MB)
     log_backup_count: 3            # Number of rotated log files to keep
   advanced:
