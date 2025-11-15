@@ -5,7 +5,13 @@ import pytest
 
 from spyoncino.core.contracts import MediaArtifact, ModuleConfig, SnapshotArtifact
 from spyoncino.core.orchestrator import Orchestrator
-from spyoncino.modules.output.email_notifier import EmailAttachment, EmailNotifier
+from spyoncino.modules.output.email_notifier import (
+    EmailAttachment,
+    EmailNotifier,
+    EmailSendError,
+    SMTPLibEmailSender,
+    _ensure_list,
+)
 
 
 class StubEmailSender:
@@ -107,3 +113,78 @@ async def test_email_notifier_handles_clip(tmp_path: Path) -> None:
     await orchestrator.stop()
 
     assert sender.calls and sender.calls[0]["attachments"][0].file_path == clip_path
+
+
+def test_ensure_list_normalizes_inputs() -> None:
+    assert _ensure_list(None) == []
+    assert _ensure_list("a@example.com, b@example.com") == ["a@example.com", "b@example.com"]
+    assert _ensure_list(["c@example.com", ""]) == ["c@example.com"]
+    with pytest.raises(ValueError):
+        _ensure_list(42)
+
+
+def test_smtp_sender_validates_options() -> None:
+    with pytest.raises(EmailSendError):
+        SMTPLibEmailSender(host="", port=25)
+    with pytest.raises(EmailSendError):
+        SMTPLibEmailSender(host="smtp.local", port=25, use_tls=True, use_ssl=True)
+
+
+@pytest.mark.asyncio
+async def test_email_notifier_configures_smtp_sender(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "snap.png"
+    artifact_path.write_bytes(b"data")
+
+    notifier = EmailNotifier()
+    orchestrator = Orchestrator()
+
+    await orchestrator.add_module(
+        notifier,
+        config=ModuleConfig(
+            options={
+                "recipients": "ops@example.com",
+                "smtp_host": "smtp.local",
+                "smtp_port": 2525,
+                "topic": "event.snapshot.ready",
+            }
+        ),
+    )
+    await orchestrator.start()
+    try:
+        assert isinstance(notifier._sender, SMTPLibEmailSender)  # type: ignore[attr-defined]
+    finally:
+        await orchestrator.stop()
+
+
+@pytest.mark.asyncio
+async def test_email_notifier_skips_missing_artifacts(tmp_path: Path) -> None:
+    sender = StubEmailSender()
+    notifier = EmailNotifier(sender=sender)
+    orchestrator = Orchestrator()
+    await orchestrator.add_module(
+        notifier,
+        config=ModuleConfig(
+            options={
+                "recipients": ["ops@example.com"],
+                "topic": "event.snapshot.ready",
+            }
+        ),
+    )
+    await orchestrator.start()
+    artifact = SnapshotArtifact(
+        camera_id="lab",
+        artifact_path=str(tmp_path / "missing.png"),
+        metadata={},
+    )
+    await orchestrator.bus.publish("event.snapshot.ready", artifact)
+    await asyncio.sleep(0.1)
+    await orchestrator.stop()
+
+    assert not sender.calls
+
+
+def test_render_template_handles_missing_keys() -> None:
+    notifier = EmailNotifier()
+    notifier._subject_templates["snapshot"] = "Alert {unknown}"  # type: ignore[attr-defined]
+    result = notifier._render_subject("snapshot", {}, "garage")  # type: ignore[attr-defined]
+    assert result == "Spyoncino alert on garage"

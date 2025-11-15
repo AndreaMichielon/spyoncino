@@ -255,7 +255,23 @@ echo Press Ctrl+C to stop the system
 echo ========================================
 echo.
 
-spyoncino
+set "LAUNCH_CMD=%SPYONCINO_ENTRYPOINT%"
+if "%LAUNCH_CMD%"=="" set "LAUNCH_CMD=spyoncino"
+if /I "%SPYONCINO_LEGACY%"=="1" if /I "%LAUNCH_CMD%"=="spyoncino" set "LAUNCH_CMD=spyoncino-legacy"
+if /I "%LAUNCH_CMD%"=="spyoncino-legacy" (
+    goto run_legacy
+) else (
+    goto run_modular
+)
+
+:run_legacy
+goto run_start
+
+:run_modular
+goto run_start
+
+:run_start
+call %LAUNCH_CMD%
 
 echo.
 echo ========================================

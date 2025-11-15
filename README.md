@@ -45,7 +45,7 @@
 
 1. **Grab the project** – Clone the repo or download the latest release.
 2. **Have your Telegram bot token ready** – You will add it during setup.
-3. **Run the launcher** – It bootstraps everything for you and starts Spyoncino.
+3. **Run the launcher** – It bootstraps everything for you and starts the modular orchestrator.
 
 > 💡 The launcher is fully automated. Sit back and watch while it checks Python, sets up UV, creates the environment, installs PyTorch, and launches the app.
 
@@ -76,7 +76,10 @@ When you run the launcher it will:
 - ✅ Auto-detect your GPU and pull the right PyTorch build
 - ✅ Verify PyTorch and fix mismatches automatically
 - ✅ Install all other dependencies
-- ✅ Launch Spyoncino
+- ✅ Launch Spyoncino (async modular orchestrator)
+
+> 🕹️ **Need the classic stack?** Set `SPYONCINO_LEGACY=1` (or `set SPYONCINO_LEGACY=1` on Windows) before running the launcher to start the legacy pipeline instead. Advanced users can also override the entrypoint with `SPYONCINO_ENTRYPOINT=spyoncino-legacy`.
+> 🎥 **Camera selection:** The modular runner now reads `config/config.yaml` and automatically boots USB and/or RTSP camera modules for every configured camera. If no hardware inputs are defined it falls back to the simulator; force simulator mode anytime with `spyoncino --preset sim`.
 
 #### GPU Detection Modes
 
@@ -143,8 +146,8 @@ When you run the launcher it will:
    ```yaml
    telegram:
      token: "your_bot_token_here"    # Get from @BotFather
-     chat_id: null                   # Auto-detected from first message
-   
+     chat_id: null                   # Defaults to superuser + whitelisted chats when unset
+
    authentication:
      setup_password: "YourSecurePassword123!"  # For /setup command
      superuser_id: null              # Auto-set during setup
@@ -158,28 +161,22 @@ When you run the launcher it will:
 
 5. **Run**
    ```bash
-   spyoncino
+   spyoncino  # modular orchestrator (default)
+   # or, for the old synchronous CLI:
+   spyoncino-legacy
    ```
 
-### Modular Orchestrator Runner (Week 5+)
+### Legacy Runner (Retrocompatibility)
 
-Week 5 introduces the modular asyncio stack described in `TODO_ARCHITECTURE.md`. Run it with the new CLI:
+The modular orchestrator (`spyoncino` / `spyoncino-modular`) is now the default runtime. If you need the previous synchronous CLI for an existing deployment, use:
 
 ```bash
-spyoncino-modular --preset sim
+spyoncino-legacy --help
 ```
 
-- `--preset sim|usb|rtsp` selects the input module (camera simulator by default).
-- `--module clip --module yolo` appends extra modules; `--skip-module gif` removes defaults.
-- `--config-dir path/to/config` points to an alternate configuration bundle.
-- `--no-hot-reload` disables the `config.update` listener if you want a static config.
-
-When the runner starts it exposes:
-
-- **Control API:** `http://127.0.0.1:8080` (FastAPI) publishes `dashboard.control.command` and accepts `/config/zones` POSTs that flow through the config hot-reload loop.
-- **Prometheus metrics:** `http://127.0.0.1:9093/metrics` with bus queue depth, throughput, and drop counters for dashboards.
-
-`spyoncino-modular` keeps running until you press `Ctrl+C`; configuration edits applied via the Control API or other publishers immediately trigger reconfiguration without restarting modules.
+- Accepts the same configuration files as the new stack.
+- Receives security updates but no new features; expect the orchestrator to diverge quickly.
+- You can flip launchers into legacy mode with `SPYONCINO_LEGACY=1`.
 
 ## Security Setup
 
@@ -276,6 +273,8 @@ General system settings organized by category:
 | `gif_fps` | `15` | Internal GIF quality |
 | `notification_gif_fps` | `10` | Telegram GIF quality |
 
+> ℹ️ **Telegram fan-out:** The modular `telegram_notifier` automatically sends alerts to every chat listed in its `chat_targets`. When not provided, it builds this list from `telegram.chat_id`, `system.security.notification_chat_id`, the configured superuser, and every whitelisted user (private chats use the same numeric ID as the user). You can override or extend per media type with `gif_chat_targets` / `clip_chat_targets` inside `outputs.modules`.
+
 ### Telegram bot settings (inside `config/config.yaml`)
 Telegram bot and security settings now live alongside the rest of the system configuration:
 
@@ -292,7 +291,7 @@ Sensitive credentials and authentication:
 | Setting | Required | Description |
 |---------|----------|-------------|
 | `telegram.token` | Yes | Bot token from @BotFather |
-| `telegram.chat_id` | No | Auto-detected from first message |
+| `telegram.chat_id` | No | Falls back to superuser/whitelisted chats |
 | `authentication.setup_password` | Recommended | First-time setup password |
 | `authentication.superuser_id` | No | Set automatically during `/setup` |
 | `authentication.user_whitelist` | No | Managed via bot commands |
@@ -316,10 +315,10 @@ export TELEGRAM_CHAT_ID="123456789"
 ## Architecture
 
 ```
-Entry Point → Telegram Bot ↔ Event Manager ↔ Security System
-   (run.py)    (interface)      (coordination)   (AI detection)
-                    ↓               ↓               ↓
-                Notifications    Auto-cleanup    Camera Feed
+ Entry Point    →    Control API    ↔    Event Bus    ↔    Processing Modules
+(orchestrator)        (FastAPI)         (async core)        (vision, alerts)
+                          ↓                  ↓                     ↓
+                     Notifications      Auto-cleanup           Camera Feed
 ```
 
 **Core Components:**
@@ -373,15 +372,12 @@ ls /dev/video*  # Linux - list cameras
 
 ## Deployment
 
-**Production:**
-- Use environment variables for secrets
-- Set file permissions: `chmod 600 config/secrets.yaml`
-- Regularly review logs and user whitelist
-
-**Maintenance:**
-- Monitor storage usage
-- Update dependencies: `uv pip install --upgrade -e .`
-- Backup `config/config.yaml` (Telegram settings are inside) and never commit `config/secrets.yaml`
+- **Docker Compose (recommended):** use `docker/compose.modular.yaml` for a single-node stack (`docker compose -f docker/compose.modular.yaml up -d`). The HA/chaos profile in `docker/compose.dev-ha.yaml` adds a canary orchestrator plus a TLS front proxy (`docker compose -f docker/compose.modular.yaml -f docker/compose.dev-ha.yaml --profile ha up -d`).
+- **Systemd service:** copy `docker/systemd/spyoncino-modular.service` into `/etc/systemd/system/`, adjust `Environment=` lines for your preset/config path, and run `systemctl enable --now spyoncino-modular`.
+- **TLS defaults:** both the Control API (port 8080) and the websocket gateway (8765) accept `tls_*` options in `config/config.yaml`. Place certificates under `config/certs/` (or mount them into `/certs` inside Docker) and set `system.control_api.tls.enabled = true`, `dashboards.websocket_gateway.tls.enabled = true`. If you prefer terminating TLS at the edge, point the included `docker/Caddyfile` at your certificate/key pair.
+- **Runbooks:** day-2 procedures (startup, blue/green migrations, queue backpressure drills, S3 sync monitoring) live in `docs/RUNBOOKS.md`.
+- **Secrets:** keep `config/secrets.yaml` on disk with `chmod 600` (or mount via Docker secrets). The example file now documents Telegram tokens, SMTP credentials, webhook headers, and S3 IAM profiles.
+- **Maintenance:** monitor disk usage under `recordings/`, update dependencies through `uv pip install --upgrade -e .`, and back up `config/config.yaml` whenever camera manifests or dashboards change.
 
 ## Technical Details
 

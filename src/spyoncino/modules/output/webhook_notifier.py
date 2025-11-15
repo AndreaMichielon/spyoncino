@@ -91,6 +91,7 @@ class WebhookNotifier(BaseModule):
         self._verify_ssl = True
         self._include_binary = False
         self._max_binary_bytes = 2 * 1024 * 1024  # 2 MiB
+        self._require_https = True
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -100,9 +101,10 @@ class WebhookNotifier(BaseModule):
         self._topics["clip"] = options.get("clip_topic", self._topics["clip"])
 
         snapshot_url = options.get("url")
-        self._urls["snapshot"] = snapshot_url
-        self._urls["gif"] = options.get("gif_url", snapshot_url)
-        self._urls["clip"] = options.get("clip_url", snapshot_url)
+        self._require_https = bool(options.get("require_https", self._require_https))
+        self._urls["snapshot"] = self._validate_url(snapshot_url, "snapshot")
+        self._urls["gif"] = self._validate_url(options.get("gif_url", snapshot_url), "gif")
+        self._urls["clip"] = self._validate_url(options.get("clip_url", snapshot_url), "clip")
 
         self._method = options.get("method", self._method).upper()
         headers = options.get("headers")
@@ -207,6 +209,13 @@ class WebhookNotifier(BaseModule):
             )
             return None
         return base64.b64encode(data).decode("ascii")
+
+    def _validate_url(self, url: str | None, kind: str) -> str | None:
+        if url is None:
+            return None
+        if self._require_https and not url.lower().startswith("https://"):
+            raise ValueError(f"{kind} webhook URL must use https:// when require_https is enabled.")
+        return url
 
 
 __all__ = [

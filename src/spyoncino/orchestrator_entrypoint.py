@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import logging.handlers
 import signal
 from collections import OrderedDict
 from collections.abc import Iterable, Sequence
@@ -47,6 +48,39 @@ from .modules import (
 AbstractModule = type[CameraSimulator]
 
 LOGGER = logging.getLogger(__name__)
+LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+DEFAULT_LOG_FILE = Path("recordings") / "security_system.log"
+
+
+def _ensure_rotating_file_handler(
+    log_file: Path,
+    *,
+    max_mb: int = 10,
+    backup_count: int = 3,
+) -> None:
+    """Attach a rotating file handler pointed at ``log_file`` if missing."""
+
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        LOGGER.warning("Unable to create log directory %s: %s", log_file.parent, exc)
+        return
+
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers:
+        if isinstance(handler, logging.handlers.RotatingFileHandler):
+            existing = getattr(handler, "baseFilename", None)
+            if existing and Path(existing) == log_file:
+                return
+
+    handler = logging.handlers.RotatingFileHandler(
+        log_file,
+        maxBytes=max_mb * 1024 * 1024,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    root_logger.addHandler(handler)
 
 
 MODULE_REGISTRY: dict[str, AbstractModule] = {
@@ -104,71 +138,55 @@ MODULE_ALIASES: dict[str, str] = {
 }
 
 
+COMMON_PIPELINE_MODULES: list[str] = [
+    "modules.process.motion_detector",
+    "modules.process.yolo_detector",
+    "modules.process.detection_event_router",
+    "modules.event.deduplicator",
+    "modules.process.zoning_filter",
+    "modules.event.snapshot_writer",
+    "modules.event.gif_builder",
+    "modules.event.clip_builder",
+    "modules.output.rate_limiter",
+    "modules.output.telegram_notifier",
+    "modules.dashboard.control_api",
+    "modules.dashboard.telegram_bot",
+    "modules.dashboard.websocket_gateway",
+    "modules.status.prometheus_exporter",
+    "modules.status.resilience_tester",
+    "modules.storage.retention",
+    "modules.storage.s3_uploader",
+    "modules.analytics.db_logger",
+]
+
 PIPELINE_PRESETS: dict[str, list[str]] = {
-    "sim": [
-        "modules.input.camera_simulator",
-        "modules.process.motion_detector",
-        "modules.process.yolo_detector",
-        "modules.process.detection_event_router",
-        "modules.event.deduplicator",
-        "modules.process.zoning_filter",
-        "modules.event.snapshot_writer",
-        "modules.event.gif_builder",
-        "modules.event.clip_builder",
-        "modules.output.rate_limiter",
-        "modules.output.telegram_notifier",
-        "modules.dashboard.control_api",
-        "modules.dashboard.telegram_bot",
-        "modules.dashboard.websocket_gateway",
-        "modules.status.prometheus_exporter",
-        "modules.status.resilience_tester",
-        "modules.storage.retention",
-        "modules.storage.s3_uploader",
-        "modules.analytics.db_logger",
-    ],
-    "rtsp": [
-        "modules.input.rtsp_camera",
-        "modules.process.motion_detector",
-        "modules.process.yolo_detector",
-        "modules.process.detection_event_router",
-        "modules.event.deduplicator",
-        "modules.process.zoning_filter",
-        "modules.event.snapshot_writer",
-        "modules.event.gif_builder",
-        "modules.event.clip_builder",
-        "modules.output.rate_limiter",
-        "modules.output.telegram_notifier",
-        "modules.dashboard.control_api",
-        "modules.dashboard.telegram_bot",
-        "modules.dashboard.websocket_gateway",
-        "modules.status.prometheus_exporter",
-        "modules.status.resilience_tester",
-        "modules.storage.retention",
-        "modules.storage.s3_uploader",
-        "modules.analytics.db_logger",
-    ],
-    "usb": [
-        "modules.input.usb_camera",
-        "modules.process.motion_detector",
-        "modules.process.yolo_detector",
-        "modules.process.detection_event_router",
-        "modules.event.deduplicator",
-        "modules.process.zoning_filter",
-        "modules.event.snapshot_writer",
-        "modules.event.gif_builder",
-        "modules.event.clip_builder",
-        "modules.output.rate_limiter",
-        "modules.output.telegram_notifier",
-        "modules.dashboard.control_api",
-        "modules.dashboard.telegram_bot",
-        "modules.dashboard.websocket_gateway",
-        "modules.status.prometheus_exporter",
-        "modules.status.resilience_tester",
-        "modules.storage.retention",
-        "modules.storage.s3_uploader",
-        "modules.analytics.db_logger",
-    ],
+    "auto": list(COMMON_PIPELINE_MODULES),
+    "sim": ["modules.input.camera_simulator", *COMMON_PIPELINE_MODULES],
+    "rtsp": ["modules.input.rtsp_camera", *COMMON_PIPELINE_MODULES],
+    "usb": ["modules.input.usb_camera", *COMMON_PIPELINE_MODULES],
 }
+
+
+def _auto_input_modules(config_dir: Path | None) -> list[str]:
+    """Pick input modules by inspecting the configured cameras."""
+
+    try:
+        snapshot = ConfigService(config_dir=config_dir).snapshot
+    except ConfigError as exc:  # pragma: no cover - fallback to keep launcher running
+        LOGGER.warning("Failed to load config for auto preset (%s); defaulting to simulator.", exc)
+        return ["modules.input.camera_simulator"]
+
+    has_usb = any(camera.usb_port is not None for camera in snapshot.cameras)
+    has_rtsp = any(bool(camera.rtsp_url) for camera in snapshot.cameras)
+
+    modules: list[str] = []
+    if has_usb:
+        modules.append("modules.input.usb_camera")
+    if has_rtsp:
+        modules.append("modules.input.rtsp_camera")
+    if not modules:
+        modules.append("modules.input.camera_simulator")
+    return modules
 
 
 def resolve_module_name(label: str) -> str:
@@ -179,7 +197,11 @@ def resolve_module_name(label: str) -> str:
 
 
 def build_module_sequence(
-    preset: str, extra_modules: Sequence[str] | None, skip_modules: Iterable[str] | None
+    preset: str,
+    extra_modules: Sequence[str] | None,
+    skip_modules: Iterable[str] | None,
+    *,
+    config_dir: Path | None = None,
 ) -> list[str]:
     """
     Build the ordered list of module identifiers for the requested pipeline.
@@ -192,6 +214,10 @@ def build_module_sequence(
         baseline = list(PIPELINE_PRESETS[preset])
     except KeyError as exc:  # pragma: no cover - argparse guards choices
         raise ValueError(f"Unknown preset {preset}") from exc
+
+    if preset == "auto":
+        input_modules = _auto_input_modules(config_dir)
+        baseline = [*input_modules, *baseline]
 
     resolved_extras = [resolve_module_name(name) for name in (extra_modules or [])]
     resolved_skip = {resolve_module_name(name) for name in (skip_modules or [])}
@@ -242,6 +268,7 @@ async def run_pipeline(
         raise RuntimeError("No modules were registered; nothing to run.")
 
     snapshot = config_service.snapshot
+    _ensure_rotating_file_handler(snapshot.storage.path / "security_system.log")
     LOGGER.info(
         "Control API configured at http://%s:%s",
         snapshot.control_api.host,
@@ -285,8 +312,9 @@ def configure_logging(level: str) -> None:
     numeric_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(
         level=numeric_level,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        format=LOG_FORMAT,
     )
+    _ensure_rotating_file_handler(DEFAULT_LOG_FILE)
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -300,8 +328,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--preset",
         choices=sorted(PIPELINE_PRESETS.keys()),
-        default="sim",
-        help="Pipeline preset to load (controls which camera module is used).",
+        default="auto",
+        help=(
+            "Pipeline preset to load (auto inspects config.yaml, "
+            "others force specific camera modules)."
+        ),
     )
     parser.add_argument(
         "--module",
@@ -336,7 +367,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     configure_logging(args.log_level)
     try:
-        module_names = build_module_sequence(args.preset, args.extra_modules, args.skip_modules)
+        module_names = build_module_sequence(
+            args.preset,
+            args.extra_modules,
+            args.skip_modules,
+            config_dir=args.config_dir,
+        )
         asyncio.run(
             run_pipeline(
                 config_dir=args.config_dir,

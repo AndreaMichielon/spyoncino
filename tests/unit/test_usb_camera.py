@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 
+import numpy as np
 import pytest
 
-from spyoncino.modules.input.usb_camera import UsbCaptureClient
+from spyoncino.core.bus import EventBus
+from spyoncino.core.contracts import Frame, ModuleConfig
+from spyoncino.modules.input.usb_camera import UsbCamera, UsbCaptureClient
 
 
 def _install_fake_cv2(monkeypatch: pytest.MonkeyPatch, *, width: float, height: float):
@@ -92,3 +96,117 @@ async def test_usb_capture_client_respects_native_dimensions(
 
     capture = fake_cv2.captures[0]
     assert capture.set_calls == []
+
+
+class RecordingUsbClient:
+    def __init__(self, frames: list[np.ndarray | None]) -> None:
+        self.frames = frames
+        self.connect_calls = 0
+        self.close_calls = 0
+
+    async def connect(self) -> None:
+        self.connect_calls += 1
+
+    async def read(self) -> np.ndarray | None:
+        if not self.frames:
+            await asyncio.sleep(0)
+            return None
+        frame = self.frames.pop(0)
+        if frame is None:
+            await asyncio.sleep(0)
+            return None
+        return frame
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_usb_camera_publishes_frames_with_metadata() -> None:
+    bus = EventBus(telemetry_enabled=False)
+    await bus.start()
+
+    frame = np.full((2, 2, 3), 255, dtype=np.uint8)
+    client = RecordingUsbClient([frame])
+
+    captured_factory_args: dict[str, int | str | None] = {}
+
+    def factory(source: int | str, width: int | None, height: int | None) -> RecordingUsbClient:
+        captured_factory_args.update({"source": source, "width": width, "height": height})
+        return client
+
+    camera = UsbCamera(client_factory=factory)
+    camera.set_bus(bus)
+    await camera.configure(
+        ModuleConfig(
+            options={
+                "camera_id": "lab",
+                "device_path": "/dev/video0",
+                "frame_width": 320,
+                "frame_height": 240,
+                "encoding": "png",
+                "fps": 0,
+            }
+        )
+    )
+
+    received = asyncio.Event()
+    frames: list[Frame] = []
+
+    async def handler(topic: str, payload: Frame) -> None:
+        frames.append(payload)
+        received.set()
+
+    bus.subscribe("camera.lab.frame", handler)
+    await camera.start()
+    await asyncio.wait_for(received.wait(), timeout=0.5)
+    await camera.stop()
+    await bus.stop()
+
+    assert captured_factory_args == {"source": "/dev/video0", "width": 320, "height": 240}
+    assert frames
+    payload = frames[0]
+    assert payload.content_type == "image/png"
+    assert payload.metadata["source"] == "/dev/video0"
+    assert payload.metadata["width"] == 2
+    assert payload.metadata["height"] == 2
+
+
+@pytest.mark.asyncio
+async def test_usb_camera_reconnects_after_consecutive_failures() -> None:
+    bus = EventBus(telemetry_enabled=False)
+    await bus.start()
+
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    client = RecordingUsbClient([None, None, frame])
+
+    def factory(source: int | str, width: int | None, height: int | None) -> RecordingUsbClient:
+        return client
+
+    camera = UsbCamera(client_factory=factory)
+    camera.set_bus(bus)
+    await camera.configure(
+        ModuleConfig(
+            options={
+                "camera_id": "garage",
+                "device_index": 1,
+                "max_retries": 1,
+                "retry_backoff": 0.01,
+                "fps": None,
+            }
+        )
+    )
+
+    received = asyncio.Event()
+
+    async def handler(topic: str, payload: Frame) -> None:
+        received.set()
+
+    bus.subscribe("camera.garage.frame", handler)
+    await camera.start()
+    await asyncio.wait_for(received.wait(), timeout=0.5)
+    await camera.stop()
+    await bus.stop()
+
+    assert client.connect_calls >= 2  # initial + reconnect
+    assert client.close_calls >= 1

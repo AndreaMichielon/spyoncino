@@ -81,6 +81,15 @@ repos:
         args: [--ignore-words-list=crate,nd,sav,wil]
         exclude: ^(.*\.lock|.*\.gif|.*\.pt|.*\.pth)$
 
+  - repo: local
+    hooks:
+      - id: check-secrets-placeholders
+        name: Ensure secrets example keeps placeholders
+        entry: python scripts/check_secrets_placeholders.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
 # Configuration for commit messages (optional)
 # Uncomment to enforce conventional commits
 # - repo: https://github.com/compilerla/conventional-pre-commit

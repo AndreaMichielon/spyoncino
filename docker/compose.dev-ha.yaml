@@ -1,0 +1,44 @@
+services:
+  orchestrator:
+    environment:
+      SPYONCINO_PRESET: rtsp
+      SPYONCINO_EXTRA_ARGS: "--module modules.status.resilience_tester --module modules.analytics.db_logger"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  orchestrator_canary:
+    <<: *spyoncino_service
+    container_name: spyoncino-canary
+    profiles: ["ha"]
+    environment:
+      SPYONCINO_PRESET: rtsp
+      SPYONCINO_EXTRA_ARGS: "--module modules.status.resilience_tester --module modules.analytics.db_logger --skip-module modules.output.telegram_notifier"
+    ports:
+      - "8081:8080"
+      - "8766:8765"
+      - "9094:9093"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      orchestrator:
+        condition: service_started
+
+  caddy:
+    image: caddy:2.8
+    profiles: ["ha"]
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../config/certs:/certs:ro
+    ports:
+      - "8443:8443"
+      - "9443:9443"
+    depends_on:
+      orchestrator:
+        condition: service_started

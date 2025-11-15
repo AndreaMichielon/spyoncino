@@ -1,0 +1,21 @@
+[Unit]
+Description=Spyoncino modular surveillance stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spyoncino
+Group=spyoncino
+WorkingDirectory=/opt/spyoncino
+Environment=SPYONCINO_CONFIG_DIR=/etc/spyoncino
+Environment=SPYONCINO_PRESET=rtsp
+EnvironmentFile=-/etc/spyoncino/spyoncino.env
+ExecStart=/opt/spyoncino/.venv/bin/spyoncino-modular --preset ${SPYONCINO_PRESET} --config-dir ${SPYONCINO_CONFIG_DIR}
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=40
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

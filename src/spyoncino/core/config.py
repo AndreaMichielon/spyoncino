@@ -432,6 +432,18 @@ class ClipSettings(BaseModel):
     max_artifacts: int | None = Field(default=25)
 
 
+class TlsSettings(BaseModel):
+    """Reusable TLS configuration for HTTP surfaces."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = Field(default=False)
+    certfile: str | None = Field(default=None)
+    keyfile: str | None = Field(default=None)
+    ca_certfile: str | None = Field(default=None)
+    require_client_cert: bool = Field(default=False)
+
+
 class ControlApiSettings(BaseModel):
     """Control API (FastAPI) configuration."""
 
@@ -442,6 +454,7 @@ class ControlApiSettings(BaseModel):
     serve_api: bool = Field(default=True)
     command_topic: str = Field(default="dashboard.control.command")
     config_topic: str = Field(default="config.update")
+    tls: TlsSettings = Field(default_factory=TlsSettings)
 
 
 class WebsocketGatewaySettings(BaseModel):
@@ -452,6 +465,7 @@ class WebsocketGatewaySettings(BaseModel):
     host: str = Field(default="127.0.0.1")
     port: int = Field(default=8081)
     serve_http: bool = Field(default=True)
+    tls: TlsSettings = Field(default_factory=TlsSettings)
     topics: list[str] = Field(
         default_factory=lambda: [
             "status.health.summary",
@@ -871,6 +885,11 @@ class ConfigSnapshot(BaseModel):
                     "serve_api": self.control_api.serve_api,
                     "command_topic": self.control_api.command_topic,
                     "config_topic": self.control_api.config_topic,
+                    "tls_enabled": self.control_api.tls.enabled,
+                    "tls_certfile": self.control_api.tls.certfile,
+                    "tls_keyfile": self.control_api.tls.keyfile,
+                    "tls_ca_certfile": self.control_api.tls.ca_certfile,
+                    "tls_require_client_cert": self.control_api.tls.require_client_cert,
                 }
             )
 
@@ -902,11 +921,13 @@ class ConfigSnapshot(BaseModel):
             )
 
         def _telegram_notifier_config() -> ModuleConfig:
-            chat_id = self.telegram.chat_id or self.telegram_security.notification_chat_id
+            chat_id = self._default_chat_id()
+            chat_targets = self._default_chat_targets()
             return ModuleConfig(
                 options={
                     "token": self.telegram.token,
                     "chat_id": chat_id,
+                    "chat_targets": chat_targets,
                     "topic": self.rate_limit.output_topic,
                     "read_timeout": self.advanced.telegram_read_timeout,
                     "write_timeout": self.advanced.telegram_write_timeout,
@@ -1007,6 +1028,11 @@ class ConfigSnapshot(BaseModel):
                     "host": ws.host,
                     "port": ws.port,
                     "serve_http": ws.serve_http,
+                    "tls_enabled": ws.tls.enabled,
+                    "tls_certfile": ws.tls.certfile,
+                    "tls_keyfile": ws.tls.keyfile,
+                    "tls_ca_certfile": ws.tls.ca_certfile,
+                    "tls_require_client_cert": ws.tls.require_client_cert,
                     "topics": ws.topics,
                     "buffer_size": ws.buffer_size,
                     "idle_timeout_seconds": ws.idle_timeout_seconds,
@@ -1058,6 +1084,32 @@ class ConfigSnapshot(BaseModel):
             return result
         return [result]
 
+    def _default_chat_targets(self) -> list[int | str]:
+        """Resolve all Telegram destinations inferred from config."""
+
+        targets: list[int | str] = []
+
+        def _append_candidate(value: int | str | None) -> None:
+            if value is None:
+                return
+            if value not in targets:
+                targets.append(value)
+
+        _append_candidate(self.telegram.chat_id)
+        _append_candidate(self.telegram_security.notification_chat_id)
+        _append_candidate(self.authentication.superuser_id)
+        for user_id in self.authentication.user_whitelist:
+            _append_candidate(user_id)
+        return targets
+
+    def _default_chat_id(self) -> int | str | None:
+        """Return the primary chat target for backwards compatibility."""
+
+        targets = self._default_chat_targets()
+        if targets:
+            return targets[0]
+        return None
+
     def _manifest_entries(self, module_name: str) -> list[ModuleManifestEntry]:
         """Return manifest-bound module entries for the requested module name."""
 
@@ -1080,9 +1132,13 @@ class ConfigSnapshot(BaseModel):
             if options.get("token") is None:
                 raise ConfigError("Telegram notifier manifest entries require a bot token.")
             chat_id = options.get("chat_id")
-            default_chat = self.telegram.chat_id or self.telegram_security.notification_chat_id
+            default_chat = self._default_chat_id()
+            default_targets = self._default_chat_targets()
             if chat_id is None or _needs_resolution(chat_id):
                 options["chat_id"] = default_chat
+            chat_targets = options.get("chat_targets")
+            if chat_targets is None or _needs_resolution(chat_targets):
+                options["chat_targets"] = default_targets
             if options.get("chat_id") is None:
                 raise ConfigError("Telegram notifier manifest entries require a chat_id.")
             options.setdefault("topic", self.rate_limit.output_topic)
@@ -1103,6 +1159,11 @@ class ConfigSnapshot(BaseModel):
             options.setdefault("serve_api", self.control_api.serve_api)
             options.setdefault("command_topic", self.control_api.command_topic)
             options.setdefault("config_topic", self.control_api.config_topic)
+            options.setdefault("tls_enabled", self.control_api.tls.enabled)
+            options.setdefault("tls_certfile", self.control_api.tls.certfile)
+            options.setdefault("tls_keyfile", self.control_api.tls.keyfile)
+            options.setdefault("tls_ca_certfile", self.control_api.tls.ca_certfile)
+            options.setdefault("tls_require_client_cert", self.control_api.tls.require_client_cert)
         elif module_name == "modules.dashboard.telegram_bot":
             if "token" not in options or _needs_resolution(options["token"]):
                 options["token"] = self.telegram.token
@@ -1129,6 +1190,13 @@ class ConfigSnapshot(BaseModel):
             options.setdefault("host", self.websocket_gateway.host)
             options.setdefault("port", self.websocket_gateway.port)
             options.setdefault("serve_http", self.websocket_gateway.serve_http)
+            options.setdefault("tls_enabled", self.websocket_gateway.tls.enabled)
+            options.setdefault("tls_certfile", self.websocket_gateway.tls.certfile)
+            options.setdefault("tls_keyfile", self.websocket_gateway.tls.keyfile)
+            options.setdefault("tls_ca_certfile", self.websocket_gateway.tls.ca_certfile)
+            options.setdefault(
+                "tls_require_client_cert", self.websocket_gateway.tls.require_client_cert
+            )
             options.setdefault("topics", self.websocket_gateway.topics)
             options.setdefault("buffer_size", self.websocket_gateway.buffer_size)
             options.setdefault("idle_timeout_seconds", self.websocket_gateway.idle_timeout_seconds)

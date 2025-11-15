@@ -1,0 +1,14 @@
+{
+  email ops@example.com
+  auto_https off
+}
+
+https://0.0.0.0:8443 {
+  tls /certs/control-api.crt /certs/control-api.key
+  reverse_proxy orchestrator:8080
+}
+
+https://0.0.0.0:9443 {
+  tls /certs/websocket.crt /certs/websocket.key
+  reverse_proxy orchestrator:8765
+}

@@ -139,10 +139,10 @@ class TelegramNotifier(BaseModule):
             "gif": "event.gif.ready",
             "clip": "event.clip.ready",
         }
-        self._chat_targets: dict[str, int | str | None] = {
-            "snapshot": None,
-            "gif": None,
-            "clip": None,
+        self._chat_targets: dict[str, list[int | str]] = {
+            "snapshot": [],
+            "gif": [],
+            "clip": [],
         }
         self._token: str | None = None
         self._read_timeout = 30.0
@@ -163,12 +163,22 @@ class TelegramNotifier(BaseModule):
         self._topics["gif"] = options.get("gif_topic", self._topics["gif"])
         self._topics["clip"] = options.get("clip_topic", self._topics["clip"])
         chat_id = options.get("chat_id")
-        if chat_id is not None:
-            self._chat_targets["snapshot"] = chat_id
-        self._chat_targets["gif"] = options.get("gif_chat_id", self._chat_targets["gif"] or chat_id)
-        self._chat_targets["clip"] = options.get(
-            "clip_chat_id", self._chat_targets["clip"] or chat_id
+        default_targets = self._normalize_targets(options.get("chat_targets"))
+        if not default_targets:
+            default_targets = self._normalize_targets(chat_id)
+        self._chat_targets["snapshot"] = default_targets
+        gif_targets = self._normalize_targets(
+            options.get("gif_chat_targets", options.get("gif_chat_id"))
         )
+        if not gif_targets:
+            gif_targets = list(default_targets)
+        self._chat_targets["gif"] = gif_targets
+        clip_targets = self._normalize_targets(
+            options.get("clip_chat_targets", options.get("clip_chat_id"))
+        )
+        if not clip_targets:
+            clip_targets = list(default_targets)
+        self._chat_targets["clip"] = clip_targets
         self._token = options.get("token", self._token)
         self._read_timeout = float(options.get("read_timeout", self._read_timeout))
         self._write_timeout = float(options.get("write_timeout", self._write_timeout))
@@ -218,8 +228,8 @@ class TelegramNotifier(BaseModule):
 
     async def _deliver_snapshot(self, artifact: SnapshotArtifact, kind: str) -> None:
         sender = self._sender
-        chat_id = self._chat_targets.get(kind) or self._chat_targets.get("snapshot")
-        if sender is None or chat_id is None:
+        recipients = self._recipients_for(kind)
+        if sender is None or not recipients:
             logger.debug("Skipping %s notification because sender/chat is unavailable.", kind)
             return
         file_path = Path(artifact.artifact_path)
@@ -227,19 +237,26 @@ class TelegramNotifier(BaseModule):
             logger.warning("Artifact path %s does not exist; skipping.", file_path)
             return
         caption = self._render_caption(kind, artifact.metadata, artifact.camera_id)
-        try:
-            if kind == "gif" or "gif" in (artifact.content_type or ""):
-                await sender.send_animation(chat_id=chat_id, file_path=file_path, caption=caption)
-            else:
-                await sender.send_photo(chat_id=chat_id, file_path=file_path, caption=caption)
-            logger.info("TelegramNotifier delivered %s %s", kind, file_path.name)
-        except TelegramSendError as exc:
-            logger.error("Telegram %s notification failed: %s", kind, exc)
+        failures = 0
+        for chat_id in recipients:
+            try:
+                if kind == "gif" or "gif" in (artifact.content_type or ""):
+                    await sender.send_animation(
+                        chat_id=chat_id, file_path=file_path, caption=caption
+                    )
+                else:
+                    await sender.send_photo(chat_id=chat_id, file_path=file_path, caption=caption)
+                logger.info("TelegramNotifier delivered %s %s to %s", kind, file_path.name, chat_id)
+            except TelegramSendError as exc:
+                failures += 1
+                logger.error("Telegram %s notification failed for %s: %s", kind, chat_id, exc)
+        if failures and failures == len(recipients):
+            logger.warning("All Telegram %s deliveries failed for %s", kind, file_path.name)
 
     async def _deliver_clip(self, artifact: MediaArtifact) -> None:
         sender = self._sender
-        chat_id = self._chat_targets.get("clip") or self._chat_targets.get("snapshot")
-        if sender is None or chat_id is None:
+        recipients = self._recipients_for("clip")
+        if sender is None or not recipients:
             logger.debug("Skipping clip notification because sender/chat is unavailable.")
             return
         file_path = Path(artifact.artifact_path)
@@ -247,11 +264,16 @@ class TelegramNotifier(BaseModule):
             logger.warning("Clip path %s does not exist; skipping.", file_path)
             return
         caption = self._render_caption("clip", artifact.metadata, artifact.camera_id)
-        try:
-            await sender.send_video(chat_id=chat_id, file_path=file_path, caption=caption)
-            logger.info("TelegramNotifier delivered clip %s", file_path.name)
-        except TelegramSendError as exc:
-            logger.error("Telegram clip notification failed: %s", exc)
+        failures = 0
+        for chat_id in recipients:
+            try:
+                await sender.send_video(chat_id=chat_id, file_path=file_path, caption=caption)
+                logger.info("TelegramNotifier delivered clip %s to %s", file_path.name, chat_id)
+            except TelegramSendError as exc:
+                failures += 1
+                logger.error("Telegram clip notification failed for %s: %s", chat_id, exc)
+        if failures and failures == len(recipients):
+            logger.warning("All Telegram clip deliveries failed for %s", file_path.name)
 
     def _render_caption(self, kind: str, metadata: dict[str, Any], camera_id: str) -> str:
         detection = metadata.get("detection") or {}
@@ -266,6 +288,29 @@ class TelegramNotifier(BaseModule):
             return template.format(**template_vars)
         except KeyError:
             return f"Event detected on {camera_id}"
+
+    def _normalize_targets(self, value: Any) -> list[int | str]:
+        """Return a deduplicated list of chat targets."""
+
+        targets: list[int | str] = []
+        if value is None:
+            return targets
+        if isinstance(value, int | str):
+            targets.append(value)
+            return targets
+        if isinstance(value, list | tuple | set):
+            for candidate in value:
+                if isinstance(candidate, int | str) and candidate not in targets:
+                    targets.append(candidate)
+        return targets
+
+    def _recipients_for(self, kind: str) -> list[int | str]:
+        """Return configured recipients for the given notification kind."""
+
+        specific = self._chat_targets.get(kind) or []
+        if specific:
+            return specific
+        return self._chat_targets.get("snapshot", [])
 
 
 __all__ = [

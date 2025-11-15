@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import ssl
 from collections.abc import Callable
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -53,6 +55,11 @@ class ControlApi(BaseModule):
         self._server_task: asyncio.Task[None] | None = None
         self._config_factory = config_factory or uvicorn.Config
         self._server_factory = server_factory or uvicorn.Server
+        self._tls_enabled = False
+        self._tls_certfile: str | None = None
+        self._tls_keyfile: str | None = None
+        self._tls_ca_certfile: str | None = None
+        self._tls_require_client_cert = False
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -62,12 +69,29 @@ class ControlApi(BaseModule):
         self._serve_api = bool(options.get("serve_api", self._serve_api))
         self._command_topic = options.get("command_topic", self._command_topic)
         self._config_topic = options.get("config_topic", self._config_topic)
+        self._tls_enabled = bool(options.get("tls_enabled", self._tls_enabled))
+        self._tls_certfile = options.get("tls_certfile", self._tls_certfile)
+        self._tls_keyfile = options.get("tls_keyfile", self._tls_keyfile)
+        self._tls_ca_certfile = options.get("tls_ca_certfile", self._tls_ca_certfile)
+        self._tls_require_client_cert = bool(
+            options.get("tls_require_client_cert", self._tls_require_client_cert)
+        )
+        if self._tls_enabled and (not self._tls_certfile or not self._tls_keyfile):
+            raise ValueError("TLS enabled for ControlApi but certfile/keyfile missing.")
 
     async def start(self) -> None:
         self._app = self._build_app()
         if not self._serve_api:
             logger.info("ControlApi running in embedded-only mode (no HTTP server).")
             return
+        ssl_kwargs: dict[str, Any] = {}
+        if self._tls_enabled:
+            ssl_kwargs["ssl_certfile"] = self._tls_certfile
+            ssl_kwargs["ssl_keyfile"] = self._tls_keyfile
+            if self._tls_ca_certfile:
+                ssl_kwargs["ssl_ca_certs"] = self._tls_ca_certfile
+            if self._tls_require_client_cert:
+                ssl_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
         config = self._config_factory(
             app=self._app,
             host=self._host,
@@ -75,10 +99,12 @@ class ControlApi(BaseModule):
             loop="asyncio",
             lifespan="on",
             log_level="info",
+            **ssl_kwargs,
         )
         self._server = self._server_factory(config)
         self._server_task = asyncio.create_task(self._server.serve())
-        logger.info("ControlApi listening on http://%s:%s", self._host, self._port)
+        scheme = "https" if self._tls_enabled else "http"
+        logger.info("ControlApi listening on %s://%s:%s", scheme, self._host, self._port)
 
     async def stop(self) -> None:
         if self._server_task:

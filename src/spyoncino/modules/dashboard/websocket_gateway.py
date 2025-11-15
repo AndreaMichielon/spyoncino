@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import ssl
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -55,6 +56,11 @@ class WebsocketGateway(BaseModule):
         self._server_factory = server_factory or uvicorn.Server
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task[None] | None = None
+        self._tls_enabled = False
+        self._tls_certfile: str | None = None
+        self._tls_keyfile: str | None = None
+        self._tls_ca_certfile: str | None = None
+        self._tls_require_client_cert = False
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -62,6 +68,15 @@ class WebsocketGateway(BaseModule):
         self._host = options.get("host", self._host)
         self._port = int(options.get("port", self._port))
         self._serve_http = bool(options.get("serve_http", self._serve_http))
+        self._tls_enabled = bool(options.get("tls_enabled", self._tls_enabled))
+        self._tls_certfile = options.get("tls_certfile", self._tls_certfile)
+        self._tls_keyfile = options.get("tls_keyfile", self._tls_keyfile)
+        self._tls_ca_certfile = options.get("tls_ca_certfile", self._tls_ca_certfile)
+        self._tls_require_client_cert = bool(
+            options.get("tls_require_client_cert", self._tls_require_client_cert)
+        )
+        if self._tls_enabled and (not self._tls_certfile or not self._tls_keyfile):
+            raise ValueError("TLS enabled for WebsocketGateway but certfile/keyfile missing.")
         topics = options.get("topics")
         if topics:
             self._topics = list(dict.fromkeys(topics))
@@ -76,6 +91,14 @@ class WebsocketGateway(BaseModule):
         if not self._serve_http:
             logger.info("WebsocketGateway running in embedded mode (no HTTP server).")
             return
+        ssl_kwargs: dict[str, Any] = {}
+        if self._tls_enabled:
+            ssl_kwargs["ssl_certfile"] = self._tls_certfile
+            ssl_kwargs["ssl_keyfile"] = self._tls_keyfile
+            if self._tls_ca_certfile:
+                ssl_kwargs["ssl_ca_certs"] = self._tls_ca_certfile
+            if self._tls_require_client_cert:
+                ssl_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
         config = self._config_factory(
             app=self._app,
             host=self._host,
@@ -83,10 +106,12 @@ class WebsocketGateway(BaseModule):
             loop="asyncio",
             lifespan="on",
             log_level="info",
+            **ssl_kwargs,
         )
         self._server = self._server_factory(config)
         self._server_task = asyncio.create_task(self._server.serve())
-        logger.info("WebsocketGateway listening on ws://%s:%s/ws", self._host, self._port)
+        scheme = "wss" if self._tls_enabled else "ws"
+        logger.info("WebsocketGateway listening on %s://%s:%s/ws", scheme, self._host, self._port)
 
     async def stop(self) -> None:
         for subscription in self._subscriptions:

@@ -128,13 +128,21 @@ class AnalyticsDbLogger(BaseModule):
             session.refresh(record)
             return record.id or 0
 
+    @staticmethod
+    def _ensure_utc(timestamp: dt.datetime) -> dt.datetime:
+        """Return a timezone-aware UTC datetime."""
+        if timestamp.tzinfo is None:
+            return timestamp.replace(tzinfo=dt.UTC)
+        # Some drivers preserve tzinfo but drop utcoffset; guard for that too.
+        if timestamp.tzinfo.utcoffset(timestamp) is None:
+            return timestamp.replace(tzinfo=dt.UTC)
+        return timestamp.astimezone(dt.UTC)
+
     def _extract_timestamp(self, payload: BasePayload) -> dt.datetime:
         timestamp = getattr(payload, "timestamp_utc", None) or getattr(payload, "timestamp", None)
         if timestamp is None:
             timestamp = dt.datetime.now(tz=dt.UTC)
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=dt.UTC)
-        return timestamp
+        return self._ensure_utc(timestamp)
 
     async def _publish_existing_cursor(self) -> None:
         if self._engine is None:
@@ -151,11 +159,12 @@ class AnalyticsDbLogger(BaseModule):
             record = session.exec(stmt).first()
             if record is None:
                 return None
-            lag = max(0.0, (dt.datetime.now(tz=dt.UTC) - record.event_timestamp).total_seconds())
+            event_timestamp = self._ensure_utc(record.event_timestamp)
+            lag = max(0.0, (dt.datetime.now(tz=dt.UTC) - event_timestamp).total_seconds())
             return AnalyticsCursor(
                 cursor_id=record.id or 0,
                 topic=record.topic,
-                event_timestamp=record.event_timestamp,
+                event_timestamp=event_timestamp,
                 lag_seconds=lag,
             )
 

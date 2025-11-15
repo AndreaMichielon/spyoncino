@@ -40,8 +40,9 @@ dependencies = [
 # PyTorch variants (CUDA/CPU) are selected via --index-url in launcher scripts
 
 [project.scripts]
-spyoncino = "spyoncino.run:main"
+spyoncino = "spyoncino.orchestrator_entrypoint:main"
 spyoncino-modular = "spyoncino.orchestrator_entrypoint:main"
+spyoncino-legacy = "spyoncino.run:main"
 
 [project.urls]
 Homepage = "https://github.com/AndreaMichielon/spyoncino"
@@ -189,6 +190,13 @@ omit = [
     "*/tests/*",
     "*/test_*.py",
     "*/__pycache__/*",
+    "src/spyoncino/legacy/*",
+    "src/spyoncino/analytics.py",
+    "src/spyoncino/bot.py",
+    "src/spyoncino/capture.py",
+    "src/spyoncino/manager.py",
+    "src/spyoncino/run.py",
+    "src/spyoncino/security.py",
 ]
 
 [tool.coverage.report]

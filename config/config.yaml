@@ -62,16 +62,15 @@ detection:
     drop_outside: false            # True = drop detections not matching include zones
     frame_width: 1280              # Reference width for zone coordinate normalization
     frame_height: 720              # Reference height for zone coordinate normalization
-    zones:                       # Top-level list; set to null to disable zoning
-      - camera_id: "default"     # Camera the nested zones apply to
-        zones: null              # Null = no zones for this camera (acts as disabled zoning)
-    # Example structure when enabling zones:
-    # - camera_id: "default"      # Camera that owns the zone definitions
+    zones:                         # Top-level list; set to null to disable zoning completely
+      - camera_id: "default"       # Camera the nested zones apply to
+        zones: null                # Null = no zones for this camera (acts as disabled zoning for this camera)
+    # - camera_id: "default"       # Camera that owns the zone definitions
     #   zones:
-    #     door:                   # Zone identifier (unique per camera)
+    #     door:                    # Zone identifier (unique per camera)
     #       bounds: [0.0, 0.0, 0.6, 1.0]  # Normalized [x1,y1,x2,y2] covering 0-1 space
-    #       labels: ["person"]    # Optional list restricting which labels trigger the zone
-    #       action: "include"     # include|exclude (default include); exclude blocks events
+    #       labels: ["person"]     # Optional list restricting which labels trigger the zone
+    #       action: "include"      # include|exclude (default include); exclude blocks events
 
   notifications:
     output_for_motion: "text"      # null/text/snap/gif/video – what to send on motion-only events
@@ -163,6 +162,12 @@ system:
     serve_api: true
     command_topic: "dashboard.control.command"  # Topic for orchestrator commands
     config_topic: "config.update"               # Hot-reload topic
+    tls:
+      enabled: false               # Enable HTTPS (requires cert + key files below)
+      certfile: "config/certs/control-api.crt"
+      keyfile: "config/certs/control-api.key"
+      ca_certfile: null            # Optional CA bundle for mutual TLS
+      require_client_cert: false   # Set true to require client certificates
 
 # =============================================================================
 # DASHBOARDS (manifests + streaming settings)
@@ -172,6 +177,12 @@ dashboards:
     host: "0.0.0.0"                # Websocket gateway bind address (0.0.0.0 = all interfaces)
     port: 8765                     # Websocket port exposed to clients
     serve_http: true               # Toggle HTTP long-poll fallback
+    tls:
+      enabled: false               # Enable WSS (requires cert + key files below)
+      certfile: "config/certs/websocket.crt"
+      keyfile: "config/certs/websocket.key"
+      ca_certfile: null
+      require_client_cert: false
     topics:
       - "status.health.summary"    # Which topics should be streamed to clients
       - "status.bus"
@@ -204,3 +215,5 @@ outputs:
       enabled: false
     - module: modules.output.webhook_notifier    # Webhook notifier (disabled by default)
       enabled: false
+      options:
+        require_https: true        # Enforce https:// URLs unless explicitly disabled

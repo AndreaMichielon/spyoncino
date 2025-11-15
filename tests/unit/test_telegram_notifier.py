@@ -127,3 +127,43 @@ async def test_telegram_notifier_handles_gif_and_clip(tmp_path: Path) -> None:
 
     assert sender.animations and sender.animations[0][0] == 222
     assert sender.videos and sender.videos[0][0] == 333
+
+
+@pytest.mark.asyncio
+async def test_telegram_notifier_broadcasts_to_all_targets(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "snap.mp4"
+    artifact_path.write_bytes(b"bytes")
+    sender = StubSender()
+    notifier = TelegramNotifier(sender=sender)
+    orchestrator = Orchestrator()
+
+    await orchestrator.add_module(
+        notifier,
+        config=ModuleConfig(
+            options={
+                "chat_targets": [111, 222],
+                "gif_chat_targets": [333, 444],
+                "gif_topic": "event.gif.ready",
+            }
+        ),
+    )
+
+    await orchestrator.start()
+    artifact = SnapshotArtifact(
+        camera_id="yard",
+        artifact_path=str(artifact_path),
+        metadata={"detection": {"detector_id": "motion-basic"}},
+    )
+    gif = SnapshotArtifact(
+        camera_id="yard",
+        artifact_path=str(artifact_path),
+        content_type="image/gif",
+        metadata={"detection": {"detector_id": "motion-basic"}},
+    )
+    await orchestrator.bus.publish("event.snapshot.ready", artifact)
+    await orchestrator.bus.publish("event.gif.ready", gif)
+    await asyncio.sleep(0.05)
+    await orchestrator.stop()
+
+    assert sorted(chat for chat, *_ in sender.photos) == [111, 222]
+    assert sorted(chat for chat, *_ in sender.animations) == [333, 444]

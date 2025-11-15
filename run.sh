@@ -234,7 +234,17 @@ echo "Press Ctrl+C to stop the system"
 echo "========================================"
 echo
 
-spyoncino
+LAUNCH_CMD="${SPYONCINO_ENTRYPOINT:-spyoncino}"
+if [ "${SPYONCINO_LEGACY:-}" = "1" ] && [ "$LAUNCH_CMD" = "spyoncino" ]; then
+    LAUNCH_CMD="spyoncino-legacy"
+fi
+if [ "$LAUNCH_CMD" = "spyoncino-legacy" ]; then
+    echo "Legacy mode requested – launching classic runner ($LAUNCH_CMD)."
+else
+    echo "Launching modular orchestrator ($LAUNCH_CMD)."
+fi
+
+$LAUNCH_CMD
 
 echo
 echo "========================================"
