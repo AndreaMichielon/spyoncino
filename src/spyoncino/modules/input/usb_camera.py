@@ -1,0 +1,205 @@
+"""
+USB camera module responsible for ingesting frames from a local capture device.
+
+The implementation mirrors the RTSP camera module so it can plug into the
+existing orchestrator and event bus without additional glue code.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import io
+import logging
+from collections.abc import Callable
+
+import imageio.v3 as iio
+import numpy as np
+
+from ...core.contracts import BaseModule, Frame, ModuleConfig
+
+logger = logging.getLogger(__name__)
+
+
+class UsbCaptureClient:
+    """Thin wrapper around OpenCV VideoCapture for USB devices."""
+
+    def __init__(
+        self,
+        source: int | str,
+        *,
+        frame_width: int | None = None,
+        frame_height: int | None = None,
+    ) -> None:
+        self._source = source
+        self._frame_width = frame_width
+        self._frame_height = frame_height
+        self._capture = None
+
+    async def connect(self) -> None:
+        import cv2  # local import to keep optional during tests
+
+        def _open() -> None:
+            capture = cv2.VideoCapture(self._source)
+            if not capture.isOpened():
+                raise RuntimeError(f"Failed to open USB camera source {self._source!r}")
+            if self._frame_width:
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._frame_width))
+            if self._frame_height:
+                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._frame_height))
+            self._capture = capture
+
+        await asyncio.to_thread(_open)
+
+    async def read(self) -> np.ndarray | None:
+        if not self._capture:
+            return None
+
+        def _read() -> np.ndarray | None:
+            assert self._capture
+            ok, frame = self._capture.read()
+            if not ok:
+                return None
+            return frame
+
+        return await asyncio.to_thread(_read)
+
+    async def close(self) -> None:
+        if not self._capture:
+            return
+
+        def _release() -> None:
+            assert self._capture
+            self._capture.release()
+            self._capture = None
+
+        await asyncio.to_thread(_release)
+
+
+class UsbCamera(BaseModule):
+    """Input module that acquires frames from a USB capture device."""
+
+    name = "modules.input.usb_camera"
+
+    def __init__(
+        self,
+        *,
+        client_factory: Callable[[int | str, int | None, int | None], UsbCaptureClient]
+        | None = None,
+    ) -> None:
+        super().__init__()
+        self._client_factory = client_factory or (
+            lambda source, width, height: UsbCaptureClient(
+                source,
+                frame_width=width,
+                frame_height=height,
+            )
+        )
+        self._client: UsbCaptureClient | None = None
+        self._task: asyncio.Task[None] | None = None
+        self._running = asyncio.Event()
+        self._camera_id = "usb"
+        self._source: int | str | None = 0
+        self._fps = 15.0
+        self._encoding = ".jpg"
+        self._max_retries = 5
+        self._retry_backoff = 1.0
+        self._frame_width: int | None = None
+        self._frame_height: int | None = None
+        self._sequence = 0
+
+    async def configure(self, config: ModuleConfig) -> None:
+        await super().configure(config)
+        options = config.options
+        self._camera_id = options.get("camera_id", self._camera_id)
+        if "device_path" in options:
+            self._source = options["device_path"]
+        elif "device_index" in options:
+            self._source = int(options["device_index"])
+        elif not isinstance(self._source, int):
+            self._source = 0
+        self._fps = float(options.get("fps", self._fps))
+        encoding = options.get("encoding", self._encoding)
+        self._encoding = encoding if encoding.startswith(".") else f".{encoding}"
+        self._max_retries = int(options.get("max_retries", self._max_retries))
+        self._retry_backoff = float(options.get("retry_backoff", self._retry_backoff))
+        width = options.get("frame_width", self._frame_width)
+        self._frame_width = int(width) if width is not None else None
+        height = options.get("frame_height", self._frame_height)
+        self._frame_height = int(height) if height is not None else None
+
+    async def start(self) -> None:
+        if self._source is None:
+            raise RuntimeError("UsbCamera requires a device_index or device_path.")
+        self._client = self._client_factory(self._source, self._frame_width, self._frame_height)
+        await self._client.connect()
+        self._running.set()
+        self._task = asyncio.create_task(self._run(), name=f"{self.name}-loop")
+        logger.info("USB camera %s connected to source %s", self._camera_id, self._source)
+
+    async def stop(self) -> None:
+        self._running.clear()
+        if self._task:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+        if self._client:
+            await self._client.close()
+            self._client = None
+        logger.info("USB camera %s stopped", self._camera_id)
+
+    async def _run(self) -> None:
+        retry_count = 0
+        assert self._client is not None
+        frame_interval = 0.0 if self._fps <= 0 else 1.0 / self._fps
+        while self._running.is_set():
+            frame = await self._client.read()
+            if frame is None:
+                retry_count += 1
+                if retry_count > self._max_retries:
+                    logger.warning(
+                        "USB camera %s encountered %d read failures; reconnecting.",
+                        self._camera_id,
+                        retry_count,
+                    )
+                    await self._client.close()
+                    await asyncio.sleep(self._retry_backoff)
+                    await self._client.connect()
+                    retry_count = 0
+                else:
+                    await asyncio.sleep(frame_interval or self._retry_backoff)
+                continue
+
+            retry_count = 0
+            frame_bytes, metadata = self._encode_frame(frame)
+            self._sequence += 1
+            encoding_lower = self._encoding.lower()
+            if encoding_lower in {".jpg", ".jpeg"}:
+                content_type = "image/jpeg"
+            elif encoding_lower == ".png":
+                content_type = "image/png"
+            else:
+                content_type = "application/octet-stream"
+            payload = Frame(
+                camera_id=self._camera_id,
+                sequence_id=self._sequence,
+                data_ref=f"usb://{self._camera_id}/{self._sequence}",
+                metadata=metadata,
+                image_bytes=frame_bytes,
+                content_type=content_type,
+            )
+            await self.bus.publish(f"camera.{self._camera_id}.frame", payload)
+            if frame_interval:
+                await asyncio.sleep(frame_interval)
+
+    def _encode_frame(self, frame: np.ndarray) -> tuple[bytes, dict[str, int]]:
+        height, width = frame.shape[:2]
+        with io.BytesIO() as buffer:
+            iio.imwrite(buffer, frame, extension=self._encoding)
+            body = buffer.getvalue()
+        metadata = {"width": width, "height": height, "source": str(self._source)}
+        return body, metadata
+
+
+__all__ = ["UsbCamera", "UsbCaptureClient"]

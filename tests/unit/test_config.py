@@ -37,6 +37,10 @@ def test_module_config_generation(sample_config_service: ConfigService) -> None:
     control_api_cfg = sample_config_service.module_config_for("modules.dashboard.control_api")
     assert control_api_cfg.options["serve_api"] is False
 
+    telegram_bot_cfg = sample_config_service.module_config_for("modules.dashboard.telegram_bot")
+    assert telegram_bot_cfg.options["default_camera_id"] == "lab"
+    assert telegram_bot_cfg.options["user_whitelist"] == [42]
+
 
 def test_unknown_module_raises_error(sample_config_service: ConfigService) -> None:
     with pytest.raises(KeyError):

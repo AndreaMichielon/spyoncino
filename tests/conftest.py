@@ -102,6 +102,9 @@ def sample_config_dir(tmp_path: Path) -> Path:
 
     authentication:
       setup_password: "example"
+      superuser_id: 42
+      user_whitelist:
+        - 42
     """
     _write_yaml(config_dir / "config.yaml", config_yaml)
     _write_yaml(config_dir / "telegram.yaml", telegram_yaml)

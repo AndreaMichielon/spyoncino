@@ -4,6 +4,28 @@
 
 Spyoncino evolves into a modular, event-driven surveillance platform. The system favors incremental delivery, strong contracts, and operational visibility so new capabilities can be added with minimal coupling. Phase 1 delivers a fully working baseline; later phases layer advanced processing, scalability, and distributed options without rewriting the core.
 
+## Table of Contents
+1. [Architecture Principles](#architecture-principles)
+2. [System Structure](#system-structure)
+3. [Core Layer](#core-layer)
+4. [Event Flow & Topic Conventions](#event-flow--topic-conventions)
+5. [Module Categories](#module-categories)
+6. [Configuration Strategy](#configuration-strategy)
+7. [Implementation Roadmap](#implementation-roadmap-8-weeks)
+   - [Phase Overview](#phase-overview)
+   - [Workstreams per Phase](#workstreams-per-phase)
+   - [Iteration Breakdown](#iteration-breakdown-weekly)
+   - [Week 5 Delivery Notes](#week-5-delivery-notes)
+   - [Week 6 Spotlight](#week-6-spotlight)
+8. [Governance & Checkpoints](#governance--checkpoints)
+9. [Testing Strategy](#testing-strategy)
+10. [Observability & Operations](#observability--operations)
+11. [Tooling & Dependencies](#tooling--dependencies)
+12. [Implementation Checklist](#implementation-checklist)
+13. [Implementation Status Matrix](#implementation-status-matrix)
+14. [Appendix A: Event Bus Guidance](#appendix-a-event-bus-guidance)
+15. [Appendix B: Migration Strategy](#appendix-b-migration-strategy)
+
 ## Architecture Principles
 
 - **Do:** start with an in-memory `asyncio` bus, keep modules single-responsibility, type everything with Pydantic, prioritize observability (structlog, Prometheus), validate configuration before use, and design for graceful degradation.
@@ -83,13 +105,12 @@ src/spyoncino/
 
 ## Implementation Roadmap (8 Weeks)
 
-1. **Phase 1 – Core Foundation (Weeks 1-2):** baseline bus, module lifecycle, Dynaconf config, structlog logging, USB input, motion detector, local snapshots, Telegram notifier. *Success:* motion detected and alert sent.
-2. **Phase 2 – Essential Modules (Weeks 3-4):** RTSP input, YOLO detection, GIF media, event deduplication, rate limiting, health monitoring, Prometheus metrics. *Success:* multi-camera object detection with metrics.
-3. **Phase 3 – Enhanced Processing (Weeks 5-6):** zoning, video clip generation, multiple notification channels, FastAPI control API, configuration hot reload, Docker packaging. *Success:* zone-aware detection controllable via API.
-4. **Phase 4 – Production Hardening (Weeks 7-8):** WebSocket updates, S3 storage, database event logging, graceful shutdown, systemd integration, full documentation. *Success:* production-ready deployment with monitoring.
-5. **Phase 5 – Post-MVP Enhancements:** (as needed) Redis/NATS bus adapter, horizontal scaling, ML hot swapping, analytics extensions, multi-tenancy.
-
-## Execution Plan
+### Phase Overview
+- **Phase 1 – Core Foundation (Weeks 1-2):** baseline bus, module lifecycle, Dynaconf config, structlog logging, USB input, motion detector, local snapshots, Telegram notifier. *Success:* motion detected and alert sent.
+- **Phase 2 – Essential Modules (Weeks 3-4):** RTSP input, YOLO detection, GIF media, event deduplication, rate limiting, health monitoring, Prometheus metrics. *Success:* multi-camera object detection with metrics.
+- **Phase 3 – Enhanced Processing (Weeks 5-6):** zoning, video clip generation, multiple notification channels, FastAPI control API, configuration hot reload, Docker packaging. *Success:* zone-aware detection controllable via API.
+- **Phase 4 – Production Hardening (Weeks 7-8):** WebSocket updates, S3 storage, database event logging, graceful shutdown, systemd integration, full documentation. *Success:* production-ready deployment with monitoring.
+- **Phase 5 – Post-MVP Enhancements:** optional Redis/NATS bus adapter, horizontal scaling, ML hot swapping, analytics extensions, multi-tenancy.
 
 ### Workstreams per Phase
 
@@ -109,7 +130,7 @@ src/spyoncino/
 | ✅ 3 | Telemetry expansion | `status.bus` telemetry, RTSP input, YOLO pipeline, GIF builder, Prometheus exporters draft | Checklist 2, 5, 6; Appendix A status reporting |
 | ✅ 4 | Reliability hardening | Event dedupe, rate limiting, health aggregation, dual-camera integration tests, ops dashboard docs | Checklist 4, 7, 8; Governance demo |
 | ✅ 5 | Advanced processing | Zoning filter, MP4 clip builder, FastAPI control API, config hot reload, contract fixtures | Checklist 3, 5, 8; Appendix A backpressure |
-| 6 | Packaging & load | Docker + compose env, load tests, multi-channel notifier support, documentation refresh | Checklist 5-8; Implementation Status “Media pipeline”, “Test suites” |
+| 6 | Modular parity & packaging | Orchestrator entrypoint + config wiring, storage/analytics modules, Telegram parity, motion/person pipeline extraction, Docker/compose packaging + load tests | Checklist 5-8; Implementation Status “Legacy parity”, “Media pipeline”, “Test suites” |
 | 7 | Persistence & resilience | S3 storage, database logging, WebSocket updates, graceful shutdown + rollback drills | Checklist 6-7, 9; Appendix B migration |
 | 8 | Production launch | systemd unit, production hardening checklist, HA validation, runbooks, exec sign-off | Checklist 7-9; Governance change management |
 
@@ -120,6 +141,14 @@ src/spyoncino/
 - **Media Clips:** Added `MediaArtifact` payloads and `modules.event.clip_builder` to publish MP4 clips (`event.clip.ready`) following Appendix A backpressure limits.
 - **Control Surface:** Added FastAPI-based `modules.dashboard.control_api` that emits `ControlCommand` and `ConfigUpdate` events for camera toggles and zoning updates.
 - **Contract/Test Fixtures:** `core.contracts` gained `ControlCommand`, `ConfigUpdate`, and `ConfigSnapshotPayload`; new unit suites cover zoning, clips, control API, and orchestrator hot reload flows.
+
+### Week 6 Spotlight
+
+- **Orchestrator Entrypoint:** finalize a dedicated bootstrap that instantiates `ConfigService`, wires modules, and exposes CLI/Compose bindings.
+- **Storage & Analytics Modules:** port the legacy retention loop and event logger into `modules.storage` and `modules.analytics` with bus-sourced telemetry.
+- **Telegram Parity:** extend notifier/control bot flows for GIF/clip routing, admin commands, and rate enforcement matching legacy behavior.
+- **Pipeline Extraction:** modularize the motion + person detection stack (anti-spam, GIF workflow hooks) for repeatable deployments.
+- **Packaging & Load:** provide Docker/Compose profiles plus representative load tests to serve as regression baselines.
 
 ### Governance & Checkpoints
 
@@ -164,31 +193,47 @@ src/spyoncino/
 
 ## Implementation Status Matrix
 
-| Item | Status | Owner | Notes |
-|------|--------|-------|-------|
-| Contracts ABCs & schemas | ✅ Complete | – | `core/contracts.py` shipped with BaseModule, Frame, DetectionEvent. |
-| Event bus adapter + telemetry | ✅ Complete (baseline) | – | Async queue bus in `core/bus.py`; telemetry hooks stubbed for future expansion. |
-| `status.bus` telemetry & Prometheus exporter | ✅ Complete | – | Bus now emits `BusStatus`; Prometheus exporter module publishes gauges. |
-| Config service with rollback | ✅ Complete | – | Dynaconf snapshot builder ships `apply_changes()` and hot-reload schemas (`ConfigSnapshotPayload`). |
-| Orchestrator lifecycle | ✅ Complete | – | `core/orchestrator.py` manages bus + module lifecycle basics. |
-| Module extractions | ⏳ In progress | – | Legacy code moved under `spyoncino.legacy`, initial modular input/process modules live under `modules/`. |
-| Media pipeline enhancements | ✅ Complete | – | Snapshot writer, GIF builder, and MP4 clip builder cover artifact surface area. |
-| Event dedupe module | ✅ Complete | – | `modules.event.deduplicator` filters duplicate detections. |
-| Snapshot rate limiter | ✅ Complete | – | `modules.output.rate_limiter` enforces per-camera throughput. |
-| Health aggregation loop | ✅ Complete | – | Orchestrator publishes `status.health.summary`. |
-| Dual-camera integration tests | ✅ Complete | – | `tests/unit/test_dual_camera_pipeline.py`. |
-| Ops dashboard docs | ✅ Complete | – | `docs/OPS_DASHBOARD.md` outlines metrics & flows. |
-| RTSP input module | ✅ Complete | – | `modules.input.rtsp_camera` ingests network streams with retries. |
-| YOLO detector module | ✅ Complete | – | `modules.process.yolo_detector` wires Ultralytics/stub predictors. |
-| GIF builder module | ✅ Complete | – | `modules.event.gif_builder` buffers frames and emits GIF artifacts. |
-| Prometheus exporter module | ✅ Complete (draft) | – | `modules.status.prometheus_exporter` exposes bus telemetry via HTTP. |
-| Status aggregation module | ✅ Complete | – | Orchestrator publishes `status.health.summary`; dedicated module deferred. |
-| Zoning filter module | ✅ Complete | – | `modules.process.zoning_filter` annotates detections and enforces include/exclude zones. |
-| Clip builder module | ✅ Complete | – | `modules.event.clip_builder` emits MP4 `MediaArtifact` payloads on `event.clip.ready`. |
-| Control API module | ✅ Complete | – | FastAPI `modules.dashboard.control_api` publishes `ControlCommand` / `ConfigUpdate`. |
-| Test suites (unit/contract/integration/load) | ✅ Unit baseline | – | Bus + first-pipeline pytest coverage automated. |
-| Observability stack | Planned | – | structlog/Prometheus work scheduled for Phase 2. |
-| Documentation & migration guide | ⏳ In progress | – | Architecture doc now tracks completed items; README refresh pending. |
+### Core Platform
+| Item | Status | Notes |
+|------|--------|-------|
+| Contracts ABCs & schemas | ✅ Complete | `core/contracts.py` shipped with BaseModule, Frame, DetectionEvent. |
+| Config service with rollback | ✅ Complete | Dynaconf snapshot builder ships `apply_changes()` + `ConfigSnapshotPayload`. |
+| Orchestrator lifecycle | ✅ Complete | `core/orchestrator.py` manages bus, health loop, rollback hooks. |
+| Event bus adapter + telemetry | ✅ Complete (baseline) | Async queue bus in `core/bus.py`; telemetry hooks ready for expansion. |
+| `status.bus` telemetry & Prometheus exporter | ✅ Complete | Bus emits `BusStatus`; exporter module publishes gauges. |
+
+### Modules & Pipelines
+| Item | Status | Notes |
+|------|--------|-------|
+| Module extractions | ⏳ In progress | Legacy code relocated under `spyoncino.legacy`; first modular inputs/processors live under `modules/`. |
+| Media pipeline enhancements | ✅ Complete | Snapshot writer, GIF builder, MP4 clip builder cover artifact surface. |
+| Event dedupe module | ✅ Complete | `modules.event.deduplicator` filters duplicate detections. |
+| Snapshot rate limiter | ✅ Complete | `modules.output.rate_limiter` enforces per-camera throughput. |
+| Zoning filter module | ✅ Complete | `modules.process.zoning_filter` annotates detections + zone filtering. |
+| Clip builder module | ✅ Complete | `modules.event.clip_builder` emits MP4 `MediaArtifact` payloads. |
+| RTSP input module | ✅ Complete | `modules.input.rtsp_camera` ingests network streams with retries. |
+| YOLO detector module | ✅ Complete | `modules.process.yolo_detector` wires Ultralytics/stub predictors. |
+| GIF builder module | ✅ Complete | `modules.event.gif_builder` buffers frames and emits GIF artifacts. |
+| Control API module | ✅ Complete | FastAPI `modules.dashboard.control_api` publishes `ControlCommand`/`ConfigUpdate`. |
+| Prometheus exporter module | ✅ Complete (draft) | `modules.status.prometheus_exporter` exposes bus telemetry via HTTP. |
+
+### Quality & Ops
+| Item | Status | Notes |
+|------|--------|-------|
+| Health aggregation loop | ✅ Complete | Orchestrator publishes `status.health.summary`. |
+| Dual-camera integration tests | ✅ Complete | `tests/unit/test_dual_camera_pipeline.py`. |
+| Test suites (unit/contract/integration/load) | ✅ Unit baseline | Bus + first-pipeline pytest coverage automated. |
+| Observability stack | Planned | structlog/Prometheus work scheduled for Phase 2. |
+| Documentation & migration guide | ⏳ In progress | Architecture doc tracks scope; README refresh pending. |
+| Ops dashboard docs | ✅ Complete | `docs/OPS_DASHBOARD.md` outlines metrics & flows. |
+
+### Legacy Parity (Week 6)
+| Item | Status | Notes |
+|------|--------|-------|
+| Modular orchestrator entrypoint & config wiring | Planned (Week 6) | `spyoncino.run` still proxies legacy CLI; need dedicated bootstrap instantiating `ConfigService` + modules. |
+| Storage retention & analytics modules | Planned (Week 6) | Port `SecurityEventManager` retention loop + `EventLogger` into dedicated storage/analytics modules on the bus. |
+| Telegram notifier & control parity | Planned (Week 6) | Extend notifier/control bot for GIF/clip routing, rate limiting, admin commands matching legacy bot. |
+| Motion/person detection pipeline extraction | Planned (Week 6) | Wrap legacy motion/YOLO processing (anti-spam, GIF workflows) as modular processors. |
 
 ## Appendix A: Event Bus Guidance
 

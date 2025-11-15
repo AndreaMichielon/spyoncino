@@ -276,6 +276,34 @@ class TelegramRateLimitSettings(BaseModel):
     failed_auth_lockout: int = Field(default=300)
 
 
+class AuthenticationSettings(BaseModel):
+    """Authentication and authorization settings for control surfaces."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    setup_password: str | None = Field(default=None)
+    superuser_id: int | None = Field(default=None)
+    user_whitelist: list[int] = Field(default_factory=list)
+
+    @field_validator("user_whitelist", mode="before")
+    @classmethod
+    def _coerce_user_ids(cls, value: Any) -> list[int]:
+        if value is None:
+            return []
+        if isinstance(value, list | tuple | set):
+            result: list[int] = []
+            for item in value:
+                try:
+                    result.append(int(item))
+                except (TypeError, ValueError):
+                    continue
+            return result
+        try:
+            return [int(value)]
+        except (TypeError, ValueError):
+            return []
+
+
 class ConfigSnapshot(BaseModel):
     """
     Validated, strongly typed view of the merged configuration.
@@ -301,6 +329,7 @@ class ConfigSnapshot(BaseModel):
     telegram_rate_limiting: TelegramRateLimitSettings = Field(
         default_factory=TelegramRateLimitSettings
     )
+    authentication: AuthenticationSettings = Field(default_factory=AuthenticationSettings)
 
     def module_config(self, module_name: str) -> ModuleConfig:
         """Produce a ModuleConfig tailored for the requested module."""
@@ -409,6 +438,22 @@ class ConfigSnapshot(BaseModel):
                 }
             )
 
+        def _telegram_control_bot_config() -> ModuleConfig:
+            return ModuleConfig(
+                options={
+                    "token": self.telegram.token,
+                    "default_camera_id": self.camera.camera_id,
+                    "command_topic": self.control_api.command_topic,
+                    "health_topic": "status.health.summary",
+                    "user_whitelist": self.authentication.user_whitelist,
+                    "superuser_id": self.authentication.superuser_id,
+                    "setup_password": self.authentication.setup_password,
+                    "allow_group_commands": self.telegram_security.allow_group_commands,
+                    "silent_unauthorized": self.telegram_security.silent_unauthorized,
+                    "command_rate_limit": self.telegram_rate_limiting.command_rate_limit,
+                }
+            )
+
         def _rate_limiter_config() -> ModuleConfig:
             return ModuleConfig(
                 options={
@@ -456,6 +501,7 @@ class ConfigSnapshot(BaseModel):
             "modules.output.telegram_notifier": _telegram_notifier_config,
             "modules.status.prometheus_exporter": _prometheus_exporter_config,
             "modules.dashboard.control_api": _control_api_config,
+            "modules.dashboard.telegram_bot": _telegram_control_bot_config,
         }
 
         try:
@@ -554,6 +600,7 @@ class ConfigService:
             "telegram_security": _section(raw, "security"),
             "telegram_behavior": _section(raw, "behavior"),
             "telegram_rate_limiting": _section(raw, "rate_limiting"),
+            "authentication": _section(raw, "authentication"),
         }
         return data
 
