@@ -51,6 +51,11 @@ def sample_config_dir(tmp_path: Path) -> Path:
       path: "{recordings_dir.as_posix()}"
       snapshot_subdir: "snapshots"
       clip_subdir: "clips"
+      s3:
+        enabled: true
+        bucket: "lab-bucket"
+        region_name: "eu-west-1"
+        prefix: "lab"
 
     dedupe:
       input_topic: "process.motion.detected"
@@ -77,6 +82,29 @@ def sample_config_dir(tmp_path: Path) -> Path:
     advanced:
       telegram_read_timeout: 5
       telegram_write_timeout: 7
+
+    analytics:
+      database_url: "sqlite:///tmp/events.db"
+      cursor_topic: "analytics.cursor"
+      topics:
+        - "process.motion.unique"
+        - "storage.stats"
+
+    websocket_gateway:
+      host: "127.0.0.1"
+      port: 8800
+      serve_http: false
+      topics:
+        - "status.health.summary"
+        - "storage.stats"
+
+    resilience:
+      enabled: true
+      scenarios:
+        - name: "delay-alerts"
+          topic: "process.alert.detected"
+          latency_ms: 25
+          drop_probability: 0.05
     """
     telegram_yaml = """
     security:

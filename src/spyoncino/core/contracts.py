@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import abc
 import datetime as dt
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -250,3 +250,82 @@ class StorageStats(BasePayload):
         default_factory=dict,
         description="Per-directory artifact counts after the cleanup run.",
     )
+
+
+class StorageSyncResult(BasePayload):
+    """Emitted by remote storage modules when an artifact is synchronised."""
+
+    artifact_path: str = Field(description="Absolute path to the local artifact.")
+    bucket: str = Field(description="Destination bucket or container name.")
+    object_key: str = Field(description="Remote object key.")
+    size_bytes: int = Field(ge=0)
+    etag: str | None = Field(default=None, description="ETag or checksum returned by the backend.")
+    version_id: str | None = Field(default=None)
+    duration_ms: float = Field(ge=0.0, description="Upload duration in milliseconds.")
+    lifecycle_tags: dict[str, str] = Field(
+        default_factory=dict, description="Applied lifecycle or classification tags."
+    )
+    status: Literal["synced", "failed"] = Field(default="synced")
+    error: str | None = Field(default=None, description="Populated when status=failed.")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Arbitrary metadata relating to the upload (topics, policies, etc.).",
+    )
+
+
+class StorageDiscrepancy(BasePayload):
+    """Reported when local artifacts drift from the remote inventory."""
+
+    root: str = Field(description="Local root directory evaluated.")
+    missing_remote: list[str] = Field(
+        default_factory=list, description="Relative paths present locally but missing remotely."
+    )
+    orphaned_remote: list[str] = Field(
+        default_factory=list, description="Artifacts tracked remotely but missing locally."
+    )
+    total_local: int = Field(ge=0)
+    total_remote: int = Field(ge=0)
+
+
+class AnalyticsCursor(BasePayload):
+    """Represents the persistence cursor for analytics databases."""
+
+    cursor_id: int = Field(ge=0)
+    topic: str = Field(description="Bus topic associated with the cursor.")
+    event_timestamp: dt.datetime = Field(description="Timestamp of the last persisted event.")
+    lag_seconds: float = Field(ge=0.0, description="Estimated lag between publish and persistence.")
+    backlog: int | None = Field(
+        default=None, description="Optional queue backlog size when the cursor updated."
+    )
+
+
+class ConfigRollbackPayload(BasePayload):
+    """Published whenever a rollback drill or recovery flow finalises."""
+
+    reason: str = Field(description="Free-form reason for triggering the rollback.")
+    module: str | None = Field(default=None, description="Module affected by the drill.")
+    success: bool = Field(default=True)
+    snapshot_fingerprint: str | None = Field(
+        default=None, description="Identifier for the snapshot used to recover."
+    )
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShutdownProgress(BasePayload):
+    """Lifecycle telemetry emitted while orchestrator performs staged shutdown."""
+
+    phase: str = Field(description="Semantic phase label (outputs/events/process/inputs/etc).")
+    phase_index: int = Field(ge=0)
+    total_phases: int = Field(ge=1)
+    module: str | None = Field(default=None, description="Module operated in the phase.")
+    status: Literal["starting", "completed", "failed"] = Field(default="starting")
+    message: str | None = Field(default=None)
+
+
+class ResilienceEvent(BasePayload):
+    """Telemetry describing injected chaos scenarios."""
+
+    scenario: str = Field(description="Human readable scenario identifier.")
+    topic: str | None = Field(default=None)
+    action: Literal["latency", "drop", "enable", "disable", "status"] = Field(default="status")
+    details: dict[str, Any] = Field(default_factory=dict)

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 Handler = Callable[[str, BasePayload], Awaitable[None]]
+Interceptor = Callable[[str, BasePayload], Awaitable[tuple[str, BasePayload] | None]]
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class EventBus:
         self._published_total = 0
         self._processed_total = 0
         self._dropped_total = 0
+        self._interceptors: list[Interceptor] = []
         now = time.monotonic()
         self._last_publish_ts = now
         self._last_dispatch_ts = now
@@ -81,14 +83,40 @@ class EventBus:
                 "Unsubscribed handler %s from topic %s", subscription.handler, subscription.topic
             )
 
+    def add_interceptor(self, interceptor: Interceptor) -> None:
+        """Register an interceptor that can mutate or drop events prior to enqueuing."""
+        self._interceptors.append(interceptor)
+        logger.debug("Registered interceptor %s", interceptor)
+
+    def remove_interceptor(self, interceptor: Interceptor) -> None:
+        """Remove a previously registered interceptor."""
+        with contextlib.suppress(ValueError):
+            self._interceptors.remove(interceptor)
+
     async def publish(self, topic: str, payload: BasePayload) -> None:
         """Publish a payload for a specific topic."""
         self._published_total += 1
         self._last_publish_ts = time.monotonic()
+        topic_to_publish = topic
+        payload_to_publish = payload
+        if self._interceptors:
+            for interceptor in list(self._interceptors):
+                try:
+                    result = await interceptor(topic_to_publish, payload_to_publish)
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception(
+                        "Interceptor %s failed; continuing without changes.", interceptor
+                    )
+                    continue
+                if result is None:
+                    self._dropped_total += 1
+                    logger.debug("Event dropped by interceptor %s on topic %s", interceptor, topic)
+                    return
+                topic_to_publish, payload_to_publish = result
         if self._queue.full():
             logger.warning("Event bus queue is full; publisher will wait for free space.")
-        await self._queue.put((topic, payload))
-        logger.debug("Queued payload for topic %s", topic)
+        await self._queue.put((topic_to_publish, payload_to_publish))
+        logger.debug("Queued payload for topic %s", topic_to_publish)
 
     async def start(self) -> None:
         """Start the dispatcher loop."""

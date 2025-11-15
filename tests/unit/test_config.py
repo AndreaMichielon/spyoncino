@@ -56,6 +56,22 @@ def test_module_config_generation(sample_config_service: ConfigService) -> None:
     assert analytics_cfg.options["detection_topics"]
     assert analytics_cfg.options["storage_topic"] == "storage.stats"
 
+    db_logger_cfg = sample_config_service.module_config_for("modules.analytics.db_logger")
+    assert db_logger_cfg.options["database_url"].startswith("sqlite:///")
+    assert "process.motion.unique" in db_logger_cfg.options["topics"]
+
+    s3_cfg = sample_config_service.module_config_for("modules.storage.s3_uploader")
+    assert s3_cfg.options["bucket"] == "lab-bucket"
+    assert s3_cfg.options["enabled"] is True
+
+    ws_cfg = sample_config_service.module_config_for("modules.dashboard.websocket_gateway")
+    assert ws_cfg.options["serve_http"] is False
+    assert "storage.stats" in ws_cfg.options["topics"]
+
+    resilience_cfg = sample_config_service.module_config_for("modules.status.resilience_tester")
+    assert resilience_cfg.options["enabled"] is True
+    assert resilience_cfg.options["scenarios"][0]["name"] == "delay-alerts"
+
 
 def test_unknown_module_raises_error(sample_config_service: ConfigService) -> None:
     with pytest.raises(KeyError):

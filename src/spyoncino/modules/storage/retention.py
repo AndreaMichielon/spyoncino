@@ -16,7 +16,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ...core.contracts import BaseModule, HealthStatus, ModuleConfig, StorageStats
+from ...core.bus import Subscription
+from ...core.contracts import (
+    BaseModule,
+    HealthStatus,
+    ModuleConfig,
+    StorageDiscrepancy,
+    StorageStats,
+    StorageSyncResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +52,12 @@ class StorageRetention(BaseModule):
         self._stop_event = asyncio.Event()
         self._last_stats: StorageStats | None = None
         self._clock = clock or (lambda: dt.datetime.now(tz=dt.UTC))
+        self._remote_tracking = False
+        self._remote_topic = "storage.s3.synced"
+        self._discrepancy_topic = "storage.discrepancy"
+        self._remote_window_seconds = 3600.0
+        self._remote_index: dict[str, dt.datetime] = {}
+        self._remote_subscription: Subscription | None = None
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -61,14 +75,27 @@ class StorageRetention(BaseModule):
         if globs:
             self._artifact_globs = list(globs)
         self._stats_topic = options.get("stats_topic", self._stats_topic)
+        self._remote_tracking = bool(options.get("remote_tracking", self._remote_tracking))
+        self._remote_topic = options.get("remote_topic", self._remote_topic)
+        self._discrepancy_topic = options.get("discrepancy_topic", self._discrepancy_topic)
+        self._remote_window_seconds = float(
+            options.get("remote_window_seconds", self._remote_window_seconds)
+        )
 
     async def start(self) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
         self._stop_event.clear()
         self._task = asyncio.create_task(self._run_loop(), name="storage-retention")
+        if self._remote_tracking:
+            self._remote_subscription = self.bus.subscribe(
+                self._remote_topic, self._record_remote_sync
+            )
         logger.info("StorageRetention started; monitoring %s", self._root)
 
     async def stop(self) -> None:
+        if self._remote_subscription:
+            self.bus.unsubscribe(self._remote_subscription)
+            self._remote_subscription = None
         if self._task is None:
             return
         self._stop_event.set()
@@ -98,9 +125,11 @@ class StorageRetention(BaseModule):
     async def _run_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
-                stats = await asyncio.to_thread(self._run_cleanup_cycle)
+                stats, local_paths = await asyncio.to_thread(self._run_cleanup_cycle)
                 self._last_stats = stats
                 await self.bus.publish(self._stats_topic, stats)
+                if self._remote_tracking:
+                    await self._publish_discrepancies(local_paths)
             except Exception:  # pragma: no cover - defensive logging
                 logger.exception("Storage retention cycle failed.")
             await self._wait_with_cancel(self._cleanup_interval)
@@ -111,7 +140,7 @@ class StorageRetention(BaseModule):
         except TimeoutError:
             return
 
-    def _run_cleanup_cycle(self) -> StorageStats:
+    def _run_cleanup_cycle(self) -> tuple[StorageStats, set[str]]:
         self._root.mkdir(parents=True, exist_ok=True)
         disk = shutil.disk_usage(self._root)
         total_gb = disk.total / (1024**3)
@@ -124,6 +153,7 @@ class StorageRetention(BaseModule):
 
         files_deleted = 0
         artifacts_after: dict[str, int] = {}
+        local_paths: set[str] = set()
         for pattern in self._artifact_globs:
             remaining = 0
             for path in self._root.glob(pattern):
@@ -133,6 +163,9 @@ class StorageRetention(BaseModule):
                     files_deleted += 1
                     continue
                 remaining += 1
+                relative = self._relative_path(path)
+                if relative:
+                    local_paths.add(relative)
             artifacts_after[pattern] = remaining
 
         warning = aggressive or free_gb < self._low_space_threshold_gb
@@ -148,7 +181,7 @@ class StorageRetention(BaseModule):
             artifacts=artifacts_after,
         )
         logger.debug("Storage retention stats: %s", stats.model_dump())
-        return stats
+        return stats, local_paths
 
     def _delete_if_expired(self, path: Path, cutoff: dt.datetime) -> bool:
         try:
@@ -164,6 +197,43 @@ class StorageRetention(BaseModule):
         except OSError as exc:
             logger.warning("Failed to delete %s: %s", path, exc)
             return False
+
+    async def _record_remote_sync(self, topic: str, payload: StorageSyncResult) -> None:
+        if not isinstance(payload, StorageSyncResult):
+            return
+        relative = self._relative_path(Path(payload.artifact_path))
+        if not relative:
+            return
+        self._remote_index[relative] = self._clock()
+
+    async def _publish_discrepancies(self, local_paths: set[str]) -> None:
+        now = self._clock()
+        horizon = dt.timedelta(seconds=self._remote_window_seconds)
+        self._remote_index = {
+            path: timestamp
+            for path, timestamp in self._remote_index.items()
+            if now - timestamp <= horizon
+        }
+        remote_paths = set(self._remote_index.keys())
+        missing_remote = sorted(local_paths - remote_paths)
+        orphaned_remote = sorted(remote_paths - local_paths)
+        if not missing_remote and not orphaned_remote:
+            return
+        payload = StorageDiscrepancy(
+            root=str(self._root),
+            missing_remote=missing_remote,
+            orphaned_remote=orphaned_remote,
+            total_local=len(local_paths),
+            total_remote=len(remote_paths),
+        )
+        await self.bus.publish(self._discrepancy_topic, payload)
+
+    def _relative_path(self, path: Path) -> str | None:
+        try:
+            rel = path.resolve().relative_to(self._root.resolve())
+        except ValueError:
+            return None
+        return str(rel).replace("\\", "/")
 
 
 __all__ = ["StorageRetention"]

@@ -129,6 +129,7 @@ class StorageSettings(BaseModel):
     snapshot_subdir: str = Field(default="snapshots")
     gif_subdir: str = Field(default="gifs")
     clip_subdir: str = Field(default="clips")
+    s3: S3SyncSettings = Field(default_factory=lambda: S3SyncSettings())
 
     @field_validator("path", mode="before")
     @classmethod
@@ -161,6 +162,36 @@ class StorageSettings(BaseModel):
         self.snapshot_dir.mkdir(parents=True, exist_ok=True)
         self.gif_dir.mkdir(parents=True, exist_ok=True)
         self.clip_dir.mkdir(parents=True, exist_ok=True)
+
+
+class S3SyncSettings(BaseModel):
+    """Remote storage replication settings."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = Field(default=False)
+    bucket: str | None = Field(default=None)
+    region_name: str | None = Field(default=None)
+    prefix: str = Field(default="")
+    upload_topics: list[str] = Field(
+        default_factory=lambda: [
+            "event.snapshot.ready",
+            "event.snapshot.allowed",
+            "event.gif.ready",
+            "event.clip.ready",
+        ]
+    )
+    lifecycle_tags: dict[str, str] = Field(default_factory=dict)
+    endpoint_url: str | None = Field(default=None)
+    aws_access_key_id: str | None = Field(default=None)
+    aws_secret_access_key: str | None = Field(default=None)
+    aws_session_token: str | None = Field(default=None)
+    max_concurrency: int = Field(default=2, ge=1)
+    multipart_threshold_mb: float = Field(default=8.0, ge=0.5)
+    multipart_chunks_mb: float = Field(default=8.0, ge=0.5)
+    publish_topic: str = Field(default="storage.s3.synced")
+    discrepancy_topic: str = Field(default="storage.discrepancy")
+    remote_tracking_window_seconds: float = Field(default=3600.0, ge=60.0)
 
 
 class NotificationSettings(BaseModel):
@@ -265,6 +296,50 @@ class ControlApiSettings(BaseModel):
     config_topic: str = Field(default="config.update")
 
 
+class WebsocketGatewaySettings(BaseModel):
+    """Realtime dashboard streaming surface configuration."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    host: str = Field(default="127.0.0.1")
+    port: int = Field(default=8081)
+    serve_http: bool = Field(default=True)
+    topics: list[str] = Field(
+        default_factory=lambda: [
+            "status.health.summary",
+            "status.bus",
+            "notify.telegram.sent",
+            "analytics.persistence.cursor",
+            "storage.stats",
+        ]
+    )
+    buffer_size: int = Field(default=256, ge=10)
+    idle_timeout_seconds: float = Field(default=30.0, ge=1.0)
+
+
+class ResilienceScenarioSettings(BaseModel):
+    """Single chaos scenario description."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str
+    topic: str
+    latency_ms: float = Field(default=0.0, ge=0.0)
+    drop_probability: float = Field(default=0.0, ge=0.0, le=1.0)
+    enabled: bool = Field(default=True)
+
+
+class ResilienceSettings(BaseModel):
+    """Chaos tooling configuration."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = Field(default=False)
+    scenarios: list[ResilienceScenarioSettings] = Field(default_factory=list)
+    command_topic: str = Field(default="dashboard.control.command")
+    status_topic: str = Field(default="status.resilience.event")
+
+
 class AdvancedSettings(BaseModel):
     """Advanced tuning knobs used by multiple modules."""
 
@@ -283,9 +358,25 @@ class AnalyticsSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     db_filename: str = Field(default="events.db")
+    database_url: str | None = Field(
+        default=None, description="Optional SQLModel-compatible database URL."
+    )
     detection_topics: list[str] = Field(default_factory=lambda: ["process.motion.unique"])
     alert_topics: list[str] = Field(default_factory=lambda: ["process.alert.detected"])
     storage_topic: str = Field(default="storage.stats")
+    cursor_topic: str = Field(default="analytics.persistence.cursor")
+    topics: list[str] = Field(
+        default_factory=lambda: [
+            "process.motion.unique",
+            "process.alert.detected",
+            "storage.stats",
+        ]
+    )
+    backfill_history_seconds: int = Field(default=0, ge=0)
+    legacy_logger_enabled: bool = Field(
+        default=True,
+        description="Whether to continue emitting legacy SQLite analytics alongside DB logger.",
+    )
 
 
 class TelegramSecrets(BaseModel):
@@ -377,6 +468,7 @@ class ConfigSnapshot(BaseModel):
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
     analytics: AnalyticsSettings = Field(default_factory=AnalyticsSettings)
     control_api: ControlApiSettings = Field(default_factory=ControlApiSettings)
+    websocket_gateway: WebsocketGatewaySettings = Field(default_factory=WebsocketGatewaySettings)
     telegram: TelegramSecrets = Field(default_factory=TelegramSecrets)
     telegram_security: TelegramSecuritySettings = Field(default_factory=TelegramSecuritySettings)
     telegram_behavior: TelegramBehaviorSettings = Field(default_factory=TelegramBehaviorSettings)
@@ -384,6 +476,7 @@ class ConfigSnapshot(BaseModel):
         default_factory=TelegramRateLimitSettings
     )
     authentication: AuthenticationSettings = Field(default_factory=AuthenticationSettings)
+    resilience: ResilienceSettings = Field(default_factory=ResilienceSettings)
 
     def module_config(self, module_name: str) -> ModuleConfig:
         """Produce a ModuleConfig tailored for the requested module."""
@@ -587,6 +680,10 @@ class ConfigSnapshot(BaseModel):
                     "cleanup_interval_seconds": self.storage.cleanup_interval_seconds,
                     "artifact_globs": self.storage.artifact_globs,
                     "stats_topic": self.storage.stats_topic,
+                    "remote_tracking": self.storage.s3.enabled,
+                    "remote_topic": self.storage.s3.publish_topic,
+                    "discrepancy_topic": self.storage.s3.discrepancy_topic,
+                    "remote_window_seconds": self.storage.s3.remote_tracking_window_seconds,
                 }
             )
 
@@ -606,6 +703,74 @@ class ConfigSnapshot(BaseModel):
                 }
             )
 
+        def _analytics_db_logger_config() -> ModuleConfig:
+            db_url = (
+                self.analytics.database_url
+                or f"sqlite:///{self.storage.path / self.analytics.db_filename}"
+            )
+            dedup_topics = [
+                *self.analytics.detection_topics,
+                *self.analytics.alert_topics,
+                self.analytics.storage_topic,
+            ]
+            topics = self.analytics.topics or list(dict.fromkeys(dedup_topics))
+            return ModuleConfig(
+                options={
+                    "database_url": db_url,
+                    "topics": topics,
+                    "cursor_topic": self.analytics.cursor_topic,
+                    "backfill_history_seconds": self.analytics.backfill_history_seconds,
+                }
+            )
+
+        def _s3_uploader_config() -> ModuleConfig:
+            settings = self.storage.s3
+            return ModuleConfig(
+                options={
+                    "enabled": settings.enabled,
+                    "root_dir": str(self.storage.path),
+                    "bucket": settings.bucket,
+                    "region_name": settings.region_name,
+                    "prefix": settings.prefix,
+                    "upload_topics": settings.upload_topics,
+                    "lifecycle_tags": settings.lifecycle_tags,
+                    "endpoint_url": settings.endpoint_url,
+                    "aws_access_key_id": settings.aws_access_key_id,
+                    "aws_secret_access_key": settings.aws_secret_access_key,
+                    "aws_session_token": settings.aws_session_token,
+                    "max_concurrency": settings.max_concurrency,
+                    "multipart_threshold_mb": settings.multipart_threshold_mb,
+                    "multipart_chunks_mb": settings.multipart_chunks_mb,
+                    "publish_topic": settings.publish_topic,
+                    "discrepancy_topic": settings.discrepancy_topic,
+                    "queue_size": 64,
+                }
+            )
+
+        def _websocket_gateway_config() -> ModuleConfig:
+            ws = self.websocket_gateway
+            return ModuleConfig(
+                options={
+                    "host": ws.host,
+                    "port": ws.port,
+                    "serve_http": ws.serve_http,
+                    "topics": ws.topics,
+                    "buffer_size": ws.buffer_size,
+                    "idle_timeout_seconds": ws.idle_timeout_seconds,
+                }
+            )
+
+        def _resilience_tester_config() -> ModuleConfig:
+            res = self.resilience
+            return ModuleConfig(
+                options={
+                    "enabled": res.enabled,
+                    "scenarios": [scenario.model_dump(mode="python") for scenario in res.scenarios],
+                    "command_topic": res.command_topic,
+                    "status_topic": res.status_topic,
+                }
+            )
+
         builders: dict[str, Callable[[], ModuleConfig]] = {
             "modules.input.camera_simulator": _camera_sim_config,
             "modules.input.usb_camera": _usb_camera_config,
@@ -621,10 +786,14 @@ class ConfigSnapshot(BaseModel):
             "modules.output.rate_limiter": _rate_limiter_config,
             "modules.output.telegram_notifier": _telegram_notifier_config,
             "modules.status.prometheus_exporter": _prometheus_exporter_config,
+            "modules.status.resilience_tester": _resilience_tester_config,
             "modules.dashboard.control_api": _control_api_config,
             "modules.dashboard.telegram_bot": _telegram_control_bot_config,
+            "modules.dashboard.websocket_gateway": _websocket_gateway_config,
             "modules.storage.retention": _storage_retention_config,
+            "modules.storage.s3_uploader": _s3_uploader_config,
             "modules.analytics.event_logger": _analytics_logger_config,
+            "modules.analytics.db_logger": _analytics_db_logger_config,
         }
 
         try:
@@ -721,11 +890,13 @@ class ConfigService:
             "advanced": _section(raw, "advanced"),
             "analytics": _section(raw, "analytics"),
             "control_api": _section(raw, "control_api"),
+            "websocket_gateway": _section(raw, "websocket_gateway"),
             "telegram": _section(raw, "telegram"),
             "telegram_security": _section(raw, "security"),
             "telegram_behavior": _section(raw, "behavior"),
             "telegram_rate_limiting": _section(raw, "rate_limiting"),
             "authentication": _section(raw, "authentication"),
+            "resilience": _section(raw, "resilience"),
         }
         return data
 
@@ -741,7 +912,11 @@ __all__ = [
     "ConfigSnapshot",
     "ControlApiSettings",
     "DetectionSettings",
+    "ResilienceScenarioSettings",
+    "ResilienceSettings",
+    "S3SyncSettings",
     "StorageSettings",
+    "WebsocketGatewaySettings",
     "ZoneDefinition",
     "ZoningSettings",
 ]

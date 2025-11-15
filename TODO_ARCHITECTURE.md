@@ -17,6 +17,7 @@ Spyoncino evolves into a modular, event-driven surveillance platform. The system
    - [Iteration Breakdown](#iteration-breakdown-weekly)
    - [Week 5 Delivery Notes](#week-5-delivery-notes)
    - [Week 6 Spotlight](#week-6-spotlight)
+   - [Week 7 Delivery Notes](#week-7-delivery-notes)
 8. [Governance & Checkpoints](#governance--checkpoints)
 9. [Testing Strategy](#testing-strategy)
 10. [Observability & Operations](#observability--operations)
@@ -58,12 +59,13 @@ src/spyoncino/
 
 ### Event Bus (`core/bus.py`)
 - **Baseline:** async publish/subscribe with bounded queues, simple topic filters, structured telemetry, and periodic `status.bus` snapshots (queue depth, lag, subscriber counts).
+- **Interceptors & Resilience:** pluggable interceptors mutate/drop events (e.g., `modules.status.resilience_tester` for chaos drills) before queueing, keeping latency injection and synthetic failures out of module code.
 - **Future Enhancements:** optional request/response with timeouts, correlation IDs, and alternate transports (`BusAdapter` protocol for Redis/NATS).
 - **Status & Backpressure:** high-watermark warnings publish `BusStatus` events; mitigation strategies (drop oldest, pause publisher) are configurable.
 
 ### Contracts (`core/contracts.py`)
 - **Module Interfaces:** `BaseModule` and category-specific ABCs defining `configure`, `start`, `stop`, `health`, and optional `handle_request`.
-- **Payload Schemas:** canonical models (`FrameBatch`, `DetectionEvent`, `MediaArtifact`, `AlertNotification`, `ConfigUpdate`, `StatusReport`, etc.) with runtime validation and JSON Schema generation.
+- **Payload Schemas:** canonical models (`FrameBatch`, `DetectionEvent`, `MediaArtifact`, `StorageSyncResult`, `StorageDiscrepancy`, `AnalyticsCursor`, `ConfigUpdate`, `ConfigRollbackPayload`, `ShutdownProgress`, `ResilienceEvent`, etc.) with runtime validation and JSON Schema generation.
 - **Schema Evolution:** every payload carries `schema_version`; additive changes use tolerant parsing (`extra="allow"`). Breaking changes require new topics (e.g. `process.detected.v2`) with orchestrator-managed adapters and deprecation warnings on `status.contract`.
 - **Contract Tests:** reusable fixtures ensure third-party modules satisfy ABCs, schemas, and topic expectations before integration.
 
@@ -72,11 +74,12 @@ src/spyoncino/
 - **Sanitization & Validation:** pre-apply normalization, type coercion, and policy checks; rejected updates emit `ConfigRejected` and log to `status.contract`.
 - **Transactional Rollback:** on partial failure, restore the last snapshot, emit `config.rollback` with diagnostics, and notify orchestrator.
 - **Hot Reload:** accepted updates broadcast `config.snapshot` for subscribed modules to refresh in place, and `apply_changes()` merges `config.update` payloads without writing to disk.
+- **Expanded Schemas:** storage S3 sync (`S3SyncSettings`), analytics database logger, websocket gateway, and resilience tester settings all flow through `ConfigSnapshot.module_config` so the orchestrator wires new Week 7 modules without ad‑hoc dictionaries.
 
 ### Orchestrator (`core/orchestrator.py`)
 - **Lifecycle:** discover modules, load configuration, instantiate, register subscriptions, and coordinate start/stop with graceful shutdown.
-- **Reconfiguration:** compute per-module diffs; `configure` is idempotent. Failures trigger rollback, `status.contract` alerts, and optional module quarantine. The orchestrator now subscribes to `config.update`, reapplies module configs, and republishes `config.snapshot` after a successful merge.
-- **Health Aggregation:** poll `health()` hooks, subscribe to `status.*`, and expose unified health summaries for dashboards and readiness probes.
+- **Reconfiguration:** compute per-module diffs; `configure` is idempotent. Failures trigger rollback, `status.contract` alerts, and optional module quarantine. The orchestrator now subscribes to `config.update`, reapplies module configs, and republishes `config.snapshot` after a successful merge. Scheduled rollback drills emit `config.rollback` fingerprints for observability.
+- **Health Aggregation:** poll `health()` hooks, subscribe to `status.*`, and expose unified health summaries for dashboards and readiness probes. Staged shutdown telemetry (`status.shutdown.progress`) keeps dashboards aligned during exits.
 - **Extensibility:** supports custom module factories, alternate bus adapters, and health reporters without cross-module coupling.
 
 ## Event Flow & Topic Conventions
@@ -131,7 +134,7 @@ src/spyoncino/
 | ✅ 4 | Reliability hardening | Event dedupe, rate limiting, health aggregation, dual-camera integration tests, ops dashboard docs | Checklist 4, 7, 8; Governance demo |
 | ✅ 5 | Advanced processing | Zoning filter, MP4 clip builder, FastAPI control API, config hot reload, contract fixtures | Checklist 3, 5, 8; Appendix A backpressure |
 | ✅ 6 | Modular parity & packaging | Orchestrator entrypoint + config wiring, storage/analytics modules, Telegram parity, motion/person pipeline extraction, Docker/compose packaging + load tests | Checklist 5-8; Implementation Status “Legacy parity”, “Media pipeline”, “Test suites” |
-| 7 | Persistence & resilience | S3 storage, database logging, WebSocket updates, graceful shutdown + rollback drills | Checklist 6-7, 9; Appendix B migration |
+| ✅ 7 | Persistence & resilience | S3 storage, database logging, WebSocket updates, graceful shutdown + rollback drills | Checklist 6-7, 9; Appendix B migration |
 | 8 | Production launch | systemd unit, production hardening checklist, HA validation, runbooks, exec sign-off | Checklist 7-9; Governance change management |
 
 #### Week 5 Delivery Notes
@@ -151,6 +154,22 @@ src/spyoncino/
 - **Pipeline Extraction:** modularize the motion + person detection stack (anti-spam, GIF workflow hooks) for repeatable deployments.
 - **Packaging & Load:** provide Docker/Compose profiles plus representative load tests to serve as regression baselines.
 
+#### Week 7 Delivery Notes
+
+- **Remote Storage Sync:** Added `modules.storage.s3_uploader`, `StorageSyncResult`, and retention reconciliation via `storage.discrepancy`. Lifecycle tags, multipart uploads, and disk drift alerts now stream on the bus.
+- **Analytics Persistence Cursor:** Introduced `modules.analytics.db_logger` (SQLModel) with `analytics.persistence.cursor` telemetry so dashboards can reason about event lag, plus config builders for alternative database URLs.
+- **Realtime Dashboard Gateway:** `modules.dashboard.websocket_gateway` exposes `/ws` + `/events`, buffering `status.*`, `notify.*`, and analytics topics for operators; tests ensure buffer hydration and FastAPI integration.
+- **Graceful Shutdown & Drills:** Orchestrator publishes `status.shutdown.progress`, fingerprints snapshots during scheduled rollback drills, and surfaces results on `config.rollback`.
+- **Chaos Hooks:** `modules.status.resilience_tester` registers bus interceptors to inject latency/drops per topic, controlled via `ControlCommand` (`resilience.toggle`) with telemetry on `status.resilience.event`.
+- **Documentation & Ops:** `docs/OPS_DASHBOARD.md` now covers S3 sync/discrepancy topics, websocket clients, and resilience drill monitoring.
+
+### Week 8 Delivery Plan
+
+- **Production Packaging:** wrap the modular stack with systemd units + docker-compose profiles, confirm graceful shutdown hooks integrate with OS-level signals, and document upgrade/rollback steps.
+- **HA Validation:** run failover + chaos suites (leveraging `resilience_tester`) under sustained load, capturing SLO dashboards plus `analytics.persistence.cursor` lag baselines.
+- **Security & Compliance:** enforce TLS/secrets guidance, finalize `SECURITY.md`, and audit new dependencies (sqlmodel, boto3) for licensing/patch cadence.
+- **Runbooks & Docs:** publish operator runbooks covering S3 sync monitoring, WebSocket dashboard setup, and rollback drill expectations; refresh README and migration guidance for post-MVP rollout.
+
 ### Governance & Checkpoints
 
 - **Design Reviews:** lightweight review at start of each phase to validate scope and dependencies.
@@ -169,8 +188,10 @@ src/spyoncino/
 ## Observability & Operations
 
 - **Metrics:** Prometheus exports for bus throughput, queue depths, per-module latency, detection accuracy, resource usage, and camera availability.
+- **Realtime Streaming:** `modules.dashboard.websocket_gateway` mirrors `status.*`, `analytics.persistence.cursor`, and notification topics over `/ws` plus `/events` for long-poll clients.
+- **Chaos Readiness:** `modules.status.resilience_tester` controls latency/drop scenarios via bus commands, publishing `status.resilience.event` so operators can watch drills live.
 - **Logging:** structlog JSON in production, correlation IDs propagated via bus metadata, standardized levels (DEBUG/INFO/WARN/ERROR), automatic exception capture.
-- **Health Checks:** `/health/live`, `/health/ready`, module-specific endpoints, and `status.bus` / `status.report` topics feeding dashboards.
+- **Health Checks:** `/health/live`, `/health/ready`, module-specific endpoints, and `status.bus` / `status.report` topics feeding dashboards; staged shutdown + rollback events provide extra breadcrumbs during maintenance.
 - **Security & Deployment:** run as non-root, enforce TLS for external channels, rate-limit APIs, manage secrets securely, package via Docker/Compose with systemd service definitions.
 
 ## Tooling & Dependencies
@@ -217,6 +238,10 @@ src/spyoncino/
 | GIF builder module | ✅ Complete | `modules.event.gif_builder` buffers frames and emits GIF artifacts. |
 | Control API module | ✅ Complete | FastAPI `modules.dashboard.control_api` publishes `ControlCommand`/`ConfigUpdate`. |
 | Prometheus exporter module | ✅ Complete (draft) | `modules.status.prometheus_exporter` exposes bus telemetry via HTTP. |
+| Websocket gateway | ✅ Complete | `modules.dashboard.websocket_gateway` streams `status.*` + analytics topics over `/ws` and `/events`. |
+| S3 uploader module | ✅ Complete | `modules.storage.s3_uploader` mirrors artifacts remotely, emits `storage.s3.synced`. |
+| Analytics DB logger | ✅ Complete | `modules.analytics.db_logger` persists bus payloads via SQLModel and publishes persistence cursors. |
+| Resilience tester | ✅ Complete | `modules.status.resilience_tester` injects latency/drop scenarios through bus interceptors. |
 
 ### Quality & Ops
 | Item | Status | Notes |
@@ -224,7 +249,7 @@ src/spyoncino/
 | Health aggregation loop | ✅ Complete | Orchestrator publishes `status.health.summary`. |
 | Dual-camera integration tests | ✅ Complete | `tests/unit/test_dual_camera_pipeline.py`. |
 | Test suites (unit/contract/integration/load) | ✅ Unit baseline | Bus + first-pipeline pytest coverage automated. |
-| Observability stack | Planned | structlog/Prometheus work scheduled for Phase 2. |
+| Observability stack | ⏳ In progress | Prometheus + websocket gateway + resilience telemetry wired; structlog rollout pending. |
 | Documentation & migration guide | ⏳ In progress | Architecture doc tracks scope; README refresh pending. |
 | Ops dashboard docs | ✅ Complete | `docs/OPS_DASHBOARD.md` outlines metrics & flows. |
 

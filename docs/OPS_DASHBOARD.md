@@ -15,3 +15,15 @@
 ### Dual-Camera Expectations
 - Integration tests cover two simultaneous cameras, ensuring dedupe + rate limiting still deliver snapshots for each camera.
 - Ops dashboards should chart per-camera activity to validate both feeds remain healthy.
+
+### Remote Storage Sync
+- `modules.storage.s3_uploader` publishes `storage.s3.synced` with `StorageSyncResult` metadata (bucket, key, duration, status). Scrape delivered/failed counts to ensure remote replicas keep pace with local retention.
+- `modules.storage.retention` subscribes to sync events and emits `storage.discrepancy` whenever local vs. remote artifacts drift. Alert on non-empty `missing_remote` or `orphaned_remote`.
+
+### Realtime Gateway
+- `modules.dashboard.websocket_gateway` exposes `/ws` and `/events` feeds for dashboards. The default topic set mirrors health, bus telemetry, notifications, and analytics cursors; extend via config to include custom topics.
+- Web clients should listen for `{"type": "keepalive"}` frames to detect idle timeouts and reconnect proactively.
+
+### Chaos & Drills
+- `modules.status.resilience_tester` injects latency/drops for configured topics using bus interceptors. Toggle scenarios via `ControlCommand` (`resilience.toggle`) to run ad-hoc chaos experiments.
+- The orchestrator automatically runs weekly rollback drills: staged module restarts are reported on `config.rollback`, and shutdown phases stream via `status.shutdown.progress`. Surface both topics in dashboards to monitor recovery KPIs.

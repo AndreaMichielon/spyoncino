@@ -11,17 +11,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
+from collections import OrderedDict
 
 from .bus import EventBus, Subscription
 from .config import ConfigService, ConfigSnapshot
 from .contracts import (
     BaseModule,
+    ConfigRollbackPayload,
     ConfigSnapshotPayload,
     ConfigUpdate,
     HealthStatus,
     HealthSummary,
     ModuleConfig,
+    ShutdownProgress,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +55,11 @@ class Orchestrator:
         self._config_snapshot_topic = "config.snapshot"
         self._config_subscription: Subscription | None = None
         self._config_lock = asyncio.Lock()
+        self._shutdown_topic = "status.shutdown.progress"
+        self._rollback_topic = "config.rollback"
+        self._drill_interval: float | None = None
+        self._drill_task: asyncio.Task[None] | None = None
+        self._drill_index = 0
 
     async def add_module(self, module: BaseModule, config: ModuleConfig | None = None) -> None:
         """
@@ -101,6 +110,10 @@ class Orchestrator:
             await self._publish_config_snapshot(self._config_service.snapshot)
         if self._publish_health:
             self._health_task = asyncio.create_task(self._health_loop(), name="spyoncino-health")
+        if self._drill_interval and self._config_service:
+            self._drill_task = asyncio.create_task(
+                self._rollback_drill_loop(), name="spyoncino-rollback-drill"
+            )
         logger.info("Orchestrator started %d modules.", len(self._modules))
 
     async def stop(self) -> None:
@@ -108,14 +121,17 @@ class Orchestrator:
         if not self._running:
             logger.warning("Orchestrator stop requested while not running.")
             return
-        for module in reversed(self._modules):
-            logger.info("Stopping module %s", module.name)
-            await module.stop()
+        await self._stop_modules_staged()
         if self._health_task:
             self._health_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._health_task
             self._health_task = None
+        if self._drill_task:
+            self._drill_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._drill_task
+            self._drill_task = None
         if self._config_subscription:
             self.bus.unsubscribe(self._config_subscription)
             self._config_subscription = None
@@ -162,6 +178,10 @@ class Orchestrator:
         payload = ConfigSnapshotPayload(data=snapshot.model_dump(mode="python"))
         await self.bus.publish(self._config_snapshot_topic, payload)
 
+    def enable_rollback_drills(self, interval_hours: float = 168.0) -> None:
+        """Schedule automatic rollback drills at the requested cadence."""
+        self._drill_interval = interval_hours * 3600.0
+
     async def _health_loop(self) -> None:
         try:
             while self._running:
@@ -181,3 +201,118 @@ class Orchestrator:
         if "degraded" in statuses:
             return "degraded"
         return "healthy"
+
+    async def _stop_modules_staged(self) -> None:
+        phased_modules = self._group_modules_by_phase()
+        total_phases = len(phased_modules)
+        for index, (phase, modules) in enumerate(phased_modules.items()):
+            for module in modules:
+                await self._publish_shutdown_progress(
+                    phase, index, total_phases, module.name, "starting"
+                )
+                try:
+                    await module.stop()
+                except Exception as exc:  # pragma: no cover - logged for troubleshooting
+                    logger.exception("Module %s failed to stop cleanly.", module.name)
+                    await self._publish_shutdown_progress(
+                        phase, index, total_phases, module.name, "failed", str(exc)
+                    )
+                else:
+                    await self._publish_shutdown_progress(
+                        phase, index, total_phases, module.name, "completed"
+                    )
+
+    async def _publish_shutdown_progress(
+        self,
+        phase: str,
+        phase_index: int,
+        total_phases: int,
+        module_name: str,
+        status: str,
+        message: str | None = None,
+    ) -> None:
+        payload = ShutdownProgress(
+            phase=phase,
+            phase_index=phase_index,
+            total_phases=total_phases,
+            module=module_name,
+            status=status,  # type: ignore[arg-type]
+            message=message,
+        )
+        await self.bus.publish(self._shutdown_topic, payload)
+
+    def _group_modules_by_phase(self) -> OrderedDict[str, list[BaseModule]]:
+        phase_order = OrderedDict(
+            [
+                ("outputs", []),
+                ("dashboard", []),
+                ("events", []),
+                ("process", []),
+                ("inputs", []),
+                ("storage", []),
+                ("analytics", []),
+                ("status", []),
+                ("other", []),
+            ]
+        )
+        for module in self._modules[::-1]:  # preserve startup order within phase
+            prefix = module.name
+            if prefix.startswith("modules.output."):
+                phase_order["outputs"].append(module)
+            elif prefix.startswith("modules.dashboard."):
+                phase_order["dashboard"].append(module)
+            elif prefix.startswith("modules.event."):
+                phase_order["events"].append(module)
+            elif prefix.startswith("modules.process."):
+                phase_order["process"].append(module)
+            elif prefix.startswith("modules.input."):
+                phase_order["inputs"].append(module)
+            elif prefix.startswith("modules.storage."):
+                phase_order["storage"].append(module)
+            elif prefix.startswith("modules.analytics."):
+                phase_order["analytics"].append(module)
+            elif prefix.startswith("modules.status."):
+                phase_order["status"].append(module)
+            else:
+                phase_order["other"].append(module)
+        return OrderedDict((phase, modules) for phase, modules in phase_order.items() if modules)
+
+    async def _rollback_drill_loop(self) -> None:
+        try:
+            while self._running and self._drill_interval:
+                await asyncio.sleep(self._drill_interval)
+                await self._run_single_drill()
+        except asyncio.CancelledError:  # pragma: no cover
+            return
+
+    async def _run_single_drill(self) -> None:
+        if not self._modules or not self._config_service:
+            return
+        module = self._modules[self._drill_index % len(self._modules)]
+        self._drill_index += 1
+        logger.info("Rollback drill restarting module %s", module.name)
+        success = True
+        message: str | None = None
+        try:
+            await module.stop()
+            await module.configure(self._configs[module.name])
+            await module.start()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception("Rollback drill failed for module %s", module.name)
+            success = False
+            message = str(exc)
+        snapshot = self._config_service.snapshot
+        fingerprint = self._snapshot_fingerprint(snapshot)
+        payload = ConfigRollbackPayload(
+            reason="scheduled_drill",
+            module=module.name,
+            success=success,
+            snapshot_fingerprint=fingerprint,
+            details={"message": message} if message else {},
+        )
+        await self.bus.publish(self._rollback_topic, payload)
+
+    @staticmethod
+    def _snapshot_fingerprint(snapshot: ConfigSnapshot) -> str:
+        raw = snapshot.model_dump_json(sort_keys=True)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()

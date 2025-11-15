@@ -20,6 +20,7 @@ from pathlib import Path
 from .core.config import ConfigError, ConfigService
 from .core.orchestrator import Orchestrator
 from .modules import (
+    AnalyticsDbLogger,
     AnalyticsEventLogger,
     CameraSimulator,
     ClipBuilder,
@@ -30,12 +31,15 @@ from .modules import (
     MotionDetector,
     PrometheusExporter,
     RateLimiter,
+    ResilienceTester,
     RtspCamera,
+    S3ArtifactUploader,
     SnapshotWriter,
     StorageRetention,
     TelegramControlBot,
     TelegramNotifier,
     UsbCamera,
+    WebsocketGateway,
     YoloDetector,
     ZoningFilter,
 )
@@ -61,9 +65,13 @@ MODULE_REGISTRY: dict[str, AbstractModule] = {
     "modules.output.telegram_notifier": TelegramNotifier,
     "modules.dashboard.control_api": ControlApi,
     "modules.dashboard.telegram_bot": TelegramControlBot,
+    "modules.dashboard.websocket_gateway": WebsocketGateway,
     "modules.status.prometheus_exporter": PrometheusExporter,
+    "modules.status.resilience_tester": ResilienceTester,
     "modules.storage.retention": StorageRetention,
+    "modules.storage.s3_uploader": S3ArtifactUploader,
     "modules.analytics.event_logger": AnalyticsEventLogger,
+    "modules.analytics.db_logger": AnalyticsDbLogger,
 }
 
 
@@ -85,9 +93,14 @@ MODULE_ALIASES: dict[str, str] = {
     "telegram": "modules.output.telegram_notifier",
     "control-api": "modules.dashboard.control_api",
     "telegram-bot": "modules.dashboard.telegram_bot",
+    "websocket": "modules.dashboard.websocket_gateway",
+    "ws": "modules.dashboard.websocket_gateway",
     "prom": "modules.status.prometheus_exporter",
+    "resilience": "modules.status.resilience_tester",
     "storage": "modules.storage.retention",
+    "s3": "modules.storage.s3_uploader",
     "analytics": "modules.analytics.event_logger",
+    "db-logger": "modules.analytics.db_logger",
 }
 
 
@@ -106,9 +119,12 @@ PIPELINE_PRESETS: dict[str, list[str]] = {
         "modules.output.telegram_notifier",
         "modules.dashboard.control_api",
         "modules.dashboard.telegram_bot",
+        "modules.dashboard.websocket_gateway",
         "modules.status.prometheus_exporter",
+        "modules.status.resilience_tester",
         "modules.storage.retention",
-        "modules.analytics.event_logger",
+        "modules.storage.s3_uploader",
+        "modules.analytics.db_logger",
     ],
     "rtsp": [
         "modules.input.rtsp_camera",
@@ -124,9 +140,12 @@ PIPELINE_PRESETS: dict[str, list[str]] = {
         "modules.output.telegram_notifier",
         "modules.dashboard.control_api",
         "modules.dashboard.telegram_bot",
+        "modules.dashboard.websocket_gateway",
         "modules.status.prometheus_exporter",
+        "modules.status.resilience_tester",
         "modules.storage.retention",
-        "modules.analytics.event_logger",
+        "modules.storage.s3_uploader",
+        "modules.analytics.db_logger",
     ],
     "usb": [
         "modules.input.usb_camera",
@@ -142,9 +161,12 @@ PIPELINE_PRESETS: dict[str, list[str]] = {
         "modules.output.telegram_notifier",
         "modules.dashboard.control_api",
         "modules.dashboard.telegram_bot",
+        "modules.dashboard.websocket_gateway",
         "modules.status.prometheus_exporter",
+        "modules.status.resilience_tester",
         "modules.storage.retention",
-        "modules.analytics.event_logger",
+        "modules.storage.s3_uploader",
+        "modules.analytics.db_logger",
     ],
 }
 
@@ -195,6 +217,7 @@ async def run_pipeline(
     orchestrator = Orchestrator()
     if enable_hot_reload:
         orchestrator.enable_config_hot_reload(config_service)
+    orchestrator.enable_rollback_drills()
 
     added = 0
     for name in module_names:
