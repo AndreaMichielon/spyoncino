@@ -104,6 +104,7 @@ src/spyoncino/
 
 - **Hierarchy:** default YAML → environment-specific YAML → environment variables → secrets store (`.env`, Docker secrets). Validate presence of required secrets at startup.
 - **Schemas:** each module ships a Pydantic config model used by `configure` to apply defaults, normalize units, and enforce limits.
+- **Camera arrays:** `config.yaml` now exposes a `cameras[]` list; the config service keeps backward compatibility with the legacy `camera` block while automatically instantiating an input module per entry (USB, RTSP, or simulator) and wiring downstream modules to every `camera.<id>.frame` topic.
 - **Update Workflow:** dashboards or APIs publish `config.update`; config service validates, persists (with versioning), broadcasts `config.snapshot`, or emits `ConfigRejected` on failure.
 
 ## Implementation Roadmap (8 Weeks)

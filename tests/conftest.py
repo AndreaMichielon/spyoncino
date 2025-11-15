@@ -22,12 +22,12 @@ def sample_config_dir(tmp_path: Path) -> Path:
     config_dir.mkdir()
     recordings_dir = tmp_path / "recordings"
     config_yaml = f"""
-    camera:
-      camera_id: "lab"
-      interval_seconds: 0.01
-      rtsp_url: "rtsp://example.test/stream"
-      width: 64
-      height: 48
+    cameras:
+      - camera_id: "lab"
+        interval_seconds: 0.01
+        rtsp_url: "rtsp://example.test/stream"
+        width: 64
+        height: 48
 
     zoning:
       enabled: true

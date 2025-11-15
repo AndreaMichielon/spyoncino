@@ -13,21 +13,25 @@
 # =============================================================================
 # CAMERA SETTINGS
 # =============================================================================
-# Configure your camera input source and video parameters
-camera:
-  camera_id: "default"             # Logical identifier used for bus topics
-  # Source identification
-  usb_port: 0                    # Camera device index (0, 1, 2...) or video file path
-  rtsp_url: null                 # Optional RTSP endpoint (set to actual URL to enable)
+# Configure one or more camera input sources. Each entry becomes its own input module.
+cameras:
+  - camera_id: "default"           # Logical identifier used for bus topics
+    # Source identification
+    usb_port: 0                    # Camera device index (0, 1, 2...) or video file path
+    rtsp_url: null                 # Optional RTSP endpoint (set to actual URL to enable)
 
-  # Video resolution
-  width: 1280                     # Camera width in pixels (e.g., 640, 1280, 1920)
-  height: 720                     # Camera height in pixels (e.g., 480, 720, 1080)
-  fps: 15                         # Frames per second for capture
+    # Video resolution (set to null to keep the native feed)
+    width: 1280                    # Camera width in pixels; if height=null we keep the native aspect ratio
+    height: 720                    # Camera height in pixels; if width=null we keep the native aspect ratio
+    fps: 15                        # Frames per second; null = driver-controlled (no artificial delay)
 
-  # Optional adjustments (null = use camera defaults)
-  brightness: null                # Brightness level (camera-dependent range)
-  contrast: null                  # Contrast level (camera-dependent range)
+#   - camera_id: "garage"          # Example second camera (uncomment + edit to enable)
+#     usb_port: 1
+#     rtsp_url: null
+#     width: null
+#     height: null
+#     fps: null
+#     notes: "Custom camera wired via multi-camera pipeline"
 
 # =============================================================================
 # DETECTION SETTINGS
@@ -47,8 +51,8 @@ detection:
   # Motion detection
   motion_threshold: 5             # Pixel change threshold for motion (1-100, lower = more sensitive)
 
-  # Person tracking
-  person_cooldown_seconds: 30.0   # Seconds to wait before re-detecting same person
+  # Detection tracking
+  label_cooldown_seconds: 30.0    # Seconds to wait before re-detecting the same alert label
   bbox_overlap_threshold: 0.6     # Bounding box overlap for same person (0.0-1.0)
   alert_labels:                   # YOLO labels that should trigger an alarm (validate against model classes)
     - "person"

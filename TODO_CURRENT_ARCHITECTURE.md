@@ -4,6 +4,7 @@
 - Persistence & resilience scope is live: S3 artifact replication, analytics database cursors, WebSocket dashboards, chaos/resilience hooks, and orchestrator rollback drills.
 - Contracts/config expanded with storage sync payloads, analytics cursors, shutdown progress, resilience events, and builder coverage for S3, websocket, and chaos modules.
 - Bus/topic surface now includes `storage.s3.synced`, `storage.discrepancy`, `analytics.persistence.cursor`, `status.shutdown.progress`, `status.resilience.event`, and `dashboard.events`.
+- Multi-camera pipelines are now first-class: `config.yaml` accepts an array of `cameras[]`, ConfigService emits per-camera module configs, and the orchestrator instantiates USB/RTSP/simulator inputs plus downstream motion/YOLO consumers for every defined feed.
 
 ### New Code
 - `core.contracts`: adds `StorageSyncResult`, `StorageDiscrepancy`, `AnalyticsCursor`, `ConfigRollbackPayload`, `ShutdownProgress`, and `ResilienceEvent`.

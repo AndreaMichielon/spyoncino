@@ -223,14 +223,20 @@ async def run_pipeline(
     for name in module_names:
         module_cls = MODULE_REGISTRY[name]
         try:
-            module_config = config_service.module_config_for(name)
+            module_configs = config_service.module_configs_for(name)
         except KeyError as exc:
             LOGGER.warning("Skipping %s: %s", name, exc)
             continue
-        module = module_cls()
-        await orchestrator.add_module(module, module_config)
-        added += 1
-        LOGGER.info("Registered module %s", name)
+        if not module_configs:
+            LOGGER.info("No configuration produced for %s; skipping", name)
+            continue
+        for module_config in module_configs:
+            module = module_cls()
+            await orchestrator.add_module(module, module_config)
+            added += 1
+            camera_id = module_config.options.get("camera_id")
+            suffix = f" (camera_id={camera_id})" if camera_id else ""
+            LOGGER.info("Registered module %s%s", name, suffix)
 
     if added == 0:
         raise RuntimeError("No modules were registered; nothing to run.")

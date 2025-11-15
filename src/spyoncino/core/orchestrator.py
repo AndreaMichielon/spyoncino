@@ -44,7 +44,7 @@ class Orchestrator:
     ) -> None:
         self.bus = bus or EventBus()
         self._modules: list[BaseModule] = []
-        self._configs: dict[str, ModuleConfig] = {}
+        self._configs: dict[BaseModule, ModuleConfig] = {}
         self._running = False
         self._health_interval = health_interval
         self._publish_health = publish_health
@@ -73,7 +73,7 @@ class Orchestrator:
             config = ModuleConfig()
         await module.configure(config)
         self._modules.append(module)
-        self._configs[module.name] = config
+        self._configs[module] = config
         logger.info("Registered module %s", module.name)
 
     def enable_config_hot_reload(
@@ -165,13 +165,19 @@ class Orchestrator:
             return
         logger.info("Applying refreshed configuration to %d modules", len(self._modules))
         for module in self._modules:
+            prev_config = self._configs.get(module)
+            camera_id: str | None = None
+            if prev_config:
+                camera_id = prev_config.options.get("camera_id")
             try:
-                new_config = self._config_service.module_config_for(module.name)
+                new_config = self._config_service.module_config_for(
+                    module.name, camera_id=camera_id
+                )
             except KeyError:
                 logger.debug("No config builder registered for module %s", module.name)
                 continue
             await module.configure(new_config)
-            self._configs[module.name] = new_config
+            self._configs[module] = new_config
         await self._publish_config_snapshot(snapshot)
 
     async def _publish_config_snapshot(self, snapshot: ConfigSnapshot) -> None:
@@ -295,7 +301,11 @@ class Orchestrator:
         message: str | None = None
         try:
             await module.stop()
-            await module.configure(self._configs[module.name])
+            config = self._configs.get(module)
+            if config is None:
+                logger.warning("No stored config for module %s; skipping drill", module.name)
+                return
+            await module.configure(config)
             await module.start()
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception("Rollback drill failed for module %s", module.name)

@@ -11,10 +11,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from dynaconf import Dynaconf
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .contracts import BaseModule, ModuleConfig
 
@@ -25,6 +33,16 @@ def _section(raw: dict[str, Any], key: str) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     return {}
+
+
+def _section_list(raw: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    """List-aware helper for case-insensitive lookups."""
+    value = raw.get(key) or raw.get(key.upper()) or raw.get(key.lower())
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        return [value]
+    return []
 
 
 def _deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
@@ -52,17 +70,32 @@ class CameraSettings(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    DEFAULT_WIDTH: ClassVar[int] = 1280
+    DEFAULT_HEIGHT: ClassVar[int] = 720
+    DEFAULT_FPS: ClassVar[int] = 15
+
     camera_id: str = Field(default="default")
     usb_port: int | str = Field(default=0)
     rtsp_url: str | None = Field(default=None)
     interval_seconds: float = Field(default=1.0)
-    width: int = Field(default=640)
-    height: int = Field(default=480)
-    fps: int = Field(default=15)
+    width: int | None = Field(default=DEFAULT_WIDTH)
+    height: int | None = Field(default=DEFAULT_HEIGHT)
+    fps: int | None = Field(default=DEFAULT_FPS)
+    notes: str | None = Field(default=None)
 
     @property
     def topic(self) -> str:
         return f"camera.{self.camera_id}.frame"
+
+    def resolved_dimensions(self) -> tuple[int, int]:
+        """
+        Return width/height with sensible fallbacks for modules that require explicit numbers
+        (e.g., camera simulator).
+        """
+
+        width = self.width if self.width is not None else self.DEFAULT_WIDTH
+        height = self.height if self.height is not None else self.DEFAULT_HEIGHT
+        return width, height
 
 
 class DetectionSettings(BaseModel):
@@ -75,9 +108,18 @@ class DetectionSettings(BaseModel):
     confidence: float = Field(default=0.25)
     model_path: str | None = Field(default=None)
     class_filter: list[str] = Field(default_factory=list)
-    person_cooldown_seconds: float = Field(default=30.0)
+    label_cooldown_seconds: float = Field(
+        default=30.0,
+        validation_alias=AliasChoices("label_cooldown_seconds", "person_cooldown_seconds"),
+        serialization_alias="label_cooldown_seconds",
+    )
     bbox_overlap_threshold: float = Field(default=0.6)
     alert_labels: list[str] = Field(default_factory=lambda: ["person"])
+
+    @property
+    def person_cooldown_seconds(self) -> float:
+        """Backward-compatible alias for legacy config code."""
+        return self.label_cooldown_seconds
 
 
 class AlertPipelineSettings(BaseModel):
@@ -457,6 +499,7 @@ class ConfigSnapshot(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     camera: CameraSettings = Field(default_factory=CameraSettings)
+    cameras: list[CameraSettings] = Field(default_factory=list)
     detection: DetectionSettings = Field(default_factory=DetectionSettings)
     alert_pipeline: AlertPipelineSettings = Field(default_factory=AlertPipelineSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
@@ -478,50 +521,106 @@ class ConfigSnapshot(BaseModel):
     authentication: AuthenticationSettings = Field(default_factory=AuthenticationSettings)
     resilience: ResilienceSettings = Field(default_factory=ResilienceSettings)
 
-    def module_config(self, module_name: str) -> ModuleConfig:
+    @model_validator(mode="after")
+    def _ensure_cameras(self) -> ConfigSnapshot:
+        cameras = list(self.cameras)
+        if not cameras:
+            cameras = [self.camera]
+        self.cameras = cameras
+        self.camera = cameras[0]
+        return self
+
+    @property
+    def primary_camera(self) -> CameraSettings:
+        return self.camera
+
+    def camera_by_id(self, camera_id: str) -> CameraSettings:
+        for camera in self.cameras:
+            if camera.camera_id == camera_id:
+                return camera
+        raise KeyError(f"No camera configured with id '{camera_id}'")
+
+    def camera_topics(self) -> list[str]:
+        return [camera.topic for camera in self.cameras]
+
+    def module_config(self, module_name: str, *, camera_id: str | None = None) -> ModuleConfig:
+        configs = self.module_configs(module_name, camera_id=camera_id)
+        if not configs:
+            raise KeyError(f"No module configuration defined for {module_name}")
+        return configs[0]
+
+    def module_configs(
+        self, module_name: str, *, camera_id: str | None = None
+    ) -> list[ModuleConfig]:
         """Produce a ModuleConfig tailored for the requested module."""
 
-        def _camera_sim_config() -> ModuleConfig:
-            return ModuleConfig(
-                options={
-                    "camera_id": self.camera.camera_id,
-                    "interval_seconds": self.camera.interval_seconds,
-                    "frame_width": self.camera.width,
-                    "frame_height": self.camera.height,
-                }
-            )
+        def _selected_cameras() -> list[CameraSettings]:
+            if camera_id is None:
+                return list(self.cameras)
+            return [self.camera_by_id(camera_id)]
 
-        def _usb_camera_config() -> ModuleConfig:
-            port = self.camera.usb_port
-            options: dict[str, Any] = {
-                "camera_id": self.camera.camera_id,
-                "fps": self.camera.fps,
-                "frame_width": self.camera.width,
-                "frame_height": self.camera.height,
-            }
-            if isinstance(port, int):
-                options["device_index"] = port
-            elif port is not None:
-                options["device_path"] = str(port)
-            return ModuleConfig(options=options)
+        def _camera_sim_config() -> list[ModuleConfig]:
+            configs: list[ModuleConfig] = []
+            for camera in _selected_cameras():
+                frame_width, frame_height = camera.resolved_dimensions()
+                configs.append(
+                    ModuleConfig(
+                        options={
+                            "camera_id": camera.camera_id,
+                            "interval_seconds": camera.interval_seconds,
+                            "frame_width": frame_width,
+                            "frame_height": frame_height,
+                        }
+                    )
+                )
+            return configs
 
-        def _rtsp_camera_config() -> ModuleConfig:
-            if not self.camera.rtsp_url:
-                raise KeyError("camera.rtsp_url must be configured for RTSP module.")
-            return ModuleConfig(
-                options={
-                    "camera_id": self.camera.camera_id,
-                    "rtsp_url": self.camera.rtsp_url,
-                    "fps": self.camera.fps,
+        def _usb_camera_config() -> list[ModuleConfig]:
+            configs: list[ModuleConfig] = []
+            for camera in _selected_cameras():
+                port = camera.usb_port
+                options: dict[str, Any] = {
+                    "camera_id": camera.camera_id,
+                    "fps": camera.fps,
+                    "frame_width": camera.width,
+                    "frame_height": camera.height,
                 }
-            )
+                if isinstance(port, int):
+                    options["device_index"] = port
+                elif port is not None:
+                    options["device_path"] = str(port)
+                else:
+                    continue
+                configs.append(ModuleConfig(options=options))
+            return configs
+
+        def _rtsp_camera_config() -> list[ModuleConfig]:
+            configs: list[ModuleConfig] = []
+            for camera in _selected_cameras():
+                if not camera.rtsp_url:
+                    continue
+                configs.append(
+                    ModuleConfig(
+                        options={
+                            "camera_id": camera.camera_id,
+                            "rtsp_url": camera.rtsp_url,
+                            "fps": camera.fps,
+                        }
+                    )
+                )
+            return configs
 
         def _motion_detector_config() -> ModuleConfig:
-            return ModuleConfig(options={"input_topic": self.camera.topic})
+            return ModuleConfig(
+                options={
+                    "input_topics": self.camera_topics(),
+                    "input_topic": self.primary_camera.topic,
+                }
+            )
 
         def _yolo_detector_config() -> ModuleConfig:
             options: dict[str, Any] = {
-                "input_topics": [self.camera.topic],
+                "input_topics": self.camera_topics(),
                 "confidence_threshold": self.detection.confidence,
             }
             if self.detection.model_path:
@@ -549,7 +648,7 @@ class ConfigSnapshot(BaseModel):
         def _snapshot_writer_config() -> ModuleConfig:
             return ModuleConfig(
                 options={
-                    "frame_topics": [self.camera.topic],
+                    "frame_topics": self.camera_topics(),
                     "detection_topic": self.dedupe.output_topic,
                     "output_dir": str(self.storage.snapshot_dir),
                 }
@@ -573,7 +672,7 @@ class ConfigSnapshot(BaseModel):
             )
             return ModuleConfig(
                 options={
-                    "frame_topics": [self.camera.topic],
+                    "frame_topics": self.camera_topics(),
                     "detection_topic": detection_topic,
                     "output_dir": str(self.storage.gif_dir),
                     "fps": self.notifications.gif_fps,
@@ -586,7 +685,7 @@ class ConfigSnapshot(BaseModel):
             return ModuleConfig(
                 options={
                     "enabled": self.clip.enabled,
-                    "frame_topics": [self.camera.topic],
+                    "frame_topics": self.camera_topics(),
                     "detection_topic": self.clip.detection_topic,
                     "output_topic": self.clip.output_topic,
                     "output_dir": str(self.storage.clip_dir),
@@ -771,7 +870,7 @@ class ConfigSnapshot(BaseModel):
                 }
             )
 
-        builders: dict[str, Callable[[], ModuleConfig]] = {
+        builders: dict[str, Callable[[], list[ModuleConfig]]] = {
             "modules.input.camera_simulator": _camera_sim_config,
             "modules.input.usb_camera": _usb_camera_config,
             "modules.input.rtsp_camera": _rtsp_camera_config,
@@ -800,7 +899,10 @@ class ConfigSnapshot(BaseModel):
             builder = builders[module_name]
         except KeyError as exc:
             raise KeyError(f"No module configuration defined for {module_name}") from exc
-        return builder()
+        result = builder()
+        if isinstance(result, list):
+            return result
+        return [result]
 
 
 class ConfigService:
@@ -856,18 +958,31 @@ class ConfigService:
         self._snapshot.storage.ensure_directories()
         return self._snapshot
 
-    def module_config_for(self, module: str | type[BaseModule] | BaseModule) -> ModuleConfig:
+    def _resolve_module_name(self, module: str | type[BaseModule] | BaseModule) -> str:
+        if isinstance(module, BaseModule):
+            return module.name
+        if isinstance(module, str):
+            return module
+        return getattr(module, "name", module.__name__)
+
+    def module_config_for(
+        self, module: str | type[BaseModule] | BaseModule, *, camera_id: str | None = None
+    ) -> ModuleConfig:
         """
         Convenient wrapper around ConfigSnapshot.module_config that accepts
         module names, classes, or instances.
         """
-        if isinstance(module, BaseModule):
-            module_name = module.name
-        elif isinstance(module, str):
-            module_name = module
-        else:
-            module_name = getattr(module, "name", module.__name__)
-        return self._snapshot.module_config(module_name)
+        module_name = self._resolve_module_name(module)
+        return self._snapshot.module_config(module_name, camera_id=camera_id)
+
+    def module_configs_for(
+        self, module: str | type[BaseModule] | BaseModule, *, camera_id: str | None = None
+    ) -> list[ModuleConfig]:
+        """
+        Return all applicable ModuleConfig objects for the requested module.
+        """
+        module_name = self._resolve_module_name(module)
+        return self._snapshot.module_configs(module_name, camera_id=camera_id)
 
     def _build_snapshot(self, raw: dict[str, Any] | None = None) -> ConfigSnapshot:
         data = self._extract_snapshot_data(raw or self._settings.as_dict())
@@ -879,6 +994,7 @@ class ConfigService:
     def _extract_snapshot_data(self, raw: dict[str, Any]) -> dict[str, Any]:
         data = {
             "camera": _section(raw, "camera"),
+            "cameras": _section_list(raw, "cameras"),
             "detection": _section(raw, "detection"),
             "alert_pipeline": _section(raw, "alert_pipeline"),
             "dedupe": _section(raw, "dedupe"),

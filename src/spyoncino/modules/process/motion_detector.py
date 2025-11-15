@@ -23,14 +23,18 @@ class MotionDetector(BaseModule):
     def __init__(self, *, detector_id: str = "motion-basic") -> None:
         super().__init__()
         self._detector_id = detector_id
-        self._input_topic = "camera.default.frame"
-        self._subscription: Subscription | None = None
+        self._input_topics: list[str] = ["camera.default.frame"]
+        self._subscriptions: list[Subscription] = []
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
         options = config.options
         self._detector_id = options.get("detector_id", self._detector_id)
-        self._input_topic = options.get("input_topic", self._input_topic)
+        topics = options.get("input_topics")
+        if isinstance(topics, list | tuple | set):
+            self._input_topics = [str(topic) for topic in topics]
+        else:
+            self._input_topics = [options.get("input_topic", self._input_topics[0])]
 
     async def start(self) -> None:
         async def _handle_frame(topic: str, payload: Frame) -> None:
@@ -48,19 +52,15 @@ class MotionDetector(BaseModule):
             await self.bus.publish("process.motion.detected", detection)
             logger.info("Published synthetic detection for camera %s", payload.camera_id)
 
-        self._subscription = self.bus.subscribe(self._input_topic, _handle_frame)
-        logger.info(
-            "MotionDetector %s subscribed to %s",
-            self._detector_id,
-            self._input_topic,
-        )
+        for topic in self._input_topics:
+            subscription = self.bus.subscribe(topic, _handle_frame)
+            self._subscriptions.append(subscription)
+            logger.info("MotionDetector %s subscribed to %s", self._detector_id, topic)
 
     async def stop(self) -> None:
-        if self._subscription:
-            self.bus.unsubscribe(self._subscription)
+        while self._subscriptions:
+            subscription = self._subscriptions.pop()
+            self.bus.unsubscribe(subscription)
             logger.info(
-                "MotionDetector %s unsubscribed from %s",
-                self._detector_id,
-                self._input_topic,
+                "MotionDetector %s unsubscribed from %s", self._detector_id, subscription.topic
             )
-            self._subscription = None

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from spyoncino.core.config import ConfigService, ConfigSnapshot
+from spyoncino.core.config import CameraSettings, ConfigService, ConfigSnapshot
 
 
 def test_config_service_loads_snapshot(sample_config_service: ConfigService) -> None:
@@ -36,6 +36,7 @@ def test_module_config_generation(sample_config_service: ConfigService) -> None:
 
     yolo_cfg = sample_config_service.module_config_for("modules.process.yolo_detector")
     assert yolo_cfg.options["alert_labels"] == ["person"]
+    assert yolo_cfg.options["input_topics"] == ["camera.lab.frame"]
 
     control_api_cfg = sample_config_service.module_config_for("modules.dashboard.control_api")
     assert control_api_cfg.options["serve_api"] is False
@@ -81,3 +82,73 @@ def test_unknown_module_raises_error(sample_config_service: ConfigService) -> No
 def test_apply_changes_updates_snapshot(sample_config_service: ConfigService) -> None:
     snapshot = sample_config_service.apply_changes({"zoning": {"drop_outside": True}})
     assert snapshot.zoning.drop_outside is True
+
+
+def test_camera_settings_allows_null_dimensions() -> None:
+    settings = CameraSettings(width=None, height=None, fps=None)
+    width, height = settings.resolved_dimensions()
+    assert width == CameraSettings.DEFAULT_WIDTH
+    assert height == CameraSettings.DEFAULT_HEIGHT
+    assert settings.fps is None
+
+
+def test_motion_detector_receives_all_camera_topics(sample_config_service: ConfigService) -> None:
+    motion_cfg = sample_config_service.module_config_for("modules.process.motion_detector")
+    assert motion_cfg.options["input_topics"] == ["camera.lab.frame"]
+    assert motion_cfg.options["input_topic"] == "camera.lab.frame"
+
+
+def test_camera_simulator_config_falls_back_when_width_missing(
+    sample_config_service: ConfigService,
+) -> None:
+    snapshot = sample_config_service.apply_changes(
+        {"cameras": [{"camera_id": "lab", "width": None}]}
+    )
+    module_cfg = snapshot.module_config("modules.input.camera_simulator")
+    assert module_cfg.options["frame_width"] == CameraSettings.DEFAULT_WIDTH
+    assert module_cfg.options["frame_height"] == snapshot.camera.height
+
+
+def test_multiple_camera_configs_are_exposed(sample_config_service: ConfigService) -> None:
+    snapshot = sample_config_service.apply_changes(
+        {
+            "cameras": [
+                {
+                    "camera_id": "lab",
+                    "usb_port": 0,
+                    "width": 64,
+                    "height": 48,
+                },
+                {
+                    "camera_id": "garage",
+                    "usb_port": 1,
+                    "width": 128,
+                    "height": 96,
+                },
+            ]
+        }
+    )
+    configs = snapshot.module_configs("modules.input.camera_simulator")
+    assert len(configs) == 2
+    assert configs[0].options["camera_id"] == "lab"
+    assert configs[1].options["camera_id"] == "garage"
+
+
+def test_module_configs_for_service_wrapper(sample_config_service: ConfigService) -> None:
+    sample_config_service.apply_changes(
+        {
+            "cameras": [
+                {
+                    "camera_id": "lab",
+                    "usb_port": 0,
+                },
+                {
+                    "camera_id": "garage",
+                    "usb_port": 2,
+                },
+            ]
+        }
+    )
+    configs = sample_config_service.module_configs_for("modules.input.usb_camera")
+    camera_ids = [cfg.options["camera_id"] for cfg in configs]
+    assert camera_ids == ["lab", "garage"]

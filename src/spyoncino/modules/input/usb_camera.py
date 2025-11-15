@@ -43,10 +43,24 @@ class UsbCaptureClient:
             capture = cv2.VideoCapture(self._source)
             if not capture.isOpened():
                 raise RuntimeError(f"Failed to open USB camera source {self._source!r}")
-            if self._frame_width:
-                capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._frame_width))
-            if self._frame_height:
-                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._frame_height))
+            native_width = float(capture.get(cv2.CAP_PROP_FRAME_WIDTH)) or 0.0
+            native_height = float(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 0.0
+            aspect_ratio = None
+            if native_width > 0 and native_height > 0:
+                aspect_ratio = native_width / native_height
+            target_width = self._frame_width
+            target_height = self._frame_height
+            if aspect_ratio:
+                if target_width is not None and target_height is None:
+                    target_height = int(round(target_width / aspect_ratio))
+                    self._frame_height = target_height
+                elif target_height is not None and target_width is None:
+                    target_width = int(round(target_height * aspect_ratio))
+                    self._frame_width = target_width
+            if target_width is not None:
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(target_width))
+            if target_height is not None:
+                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(target_height))
             self._capture = capture
 
         await asyncio.to_thread(_open)
@@ -100,7 +114,7 @@ class UsbCamera(BaseModule):
         self._running = asyncio.Event()
         self._camera_id = "usb"
         self._source: int | str | None = 0
-        self._fps = 15.0
+        self._fps: float | None = 15.0
         self._encoding = ".jpg"
         self._max_retries = 5
         self._retry_backoff = 1.0
@@ -118,7 +132,9 @@ class UsbCamera(BaseModule):
             self._source = int(options["device_index"])
         elif not isinstance(self._source, int):
             self._source = 0
-        self._fps = float(options.get("fps", self._fps))
+        if "fps" in options:
+            fps_value = options["fps"]
+            self._fps = float(fps_value) if fps_value is not None else None
         encoding = options.get("encoding", self._encoding)
         self._encoding = encoding if encoding.startswith(".") else f".{encoding}"
         self._max_retries = int(options.get("max_retries", self._max_retries))
@@ -152,7 +168,9 @@ class UsbCamera(BaseModule):
     async def _run(self) -> None:
         retry_count = 0
         assert self._client is not None
-        frame_interval = 0.0 if self._fps <= 0 else 1.0 / self._fps
+        frame_interval = 0.0
+        if self._fps:
+            frame_interval = 0.0 if self._fps <= 0 else 1.0 / self._fps
         while self._running.is_set():
             frame = await self._client.read()
             if frame is None:

@@ -237,13 +237,21 @@ Configuration is split into three YAML files for better organization:
 ### config/config.yaml (Safe to commit)
 General system settings organized by category:
 
-**Camera Settings:**
+**Camera Settings (`cameras[]` entries):**
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `usb_port` | `0` | Camera device index |
-| `width` / `height` | `1280x720` | Video resolution |
-| `fps` | `15` | Frames per second |
-| `brightness` / `contrast` | `null` | Optional camera adjustments |
+| `camera_id` | `"default"` | Identifier that becomes `camera.<id>.frame` |
+| `usb_port` / `rtsp_url` | `0` / `null` | Select USB device index or RTSP URL |
+| `width` / `height` | `1280x720` | Resolution (`null` keeps native; single-axis overrides maintain aspect) |
+| `fps` | `15` | Frames per second (`null` keeps driver timing) |
+| `notes` | `null` | Optional metadata for operators |
+
+**Multiple Camera Inputs**
+- Populate `cameras:` with one entry per physical feed; the orchestrator now instantiates an input module per entry automatically.
+- Mixed transports are supported: specify `usb_port` for USB devices, `rtsp_url` for network streams, or leave both for simulator-only configs.
+- Downstream modules automatically subscribe to all `camera.<id>.frame` topics (motion, YOLO, GIF/clip builders, etc.); no manual wiring needed.
+- Each entry must keep a unique `camera_id` so topics, snapshots, and notifications remain distinguishable.
+- See `tests/unit/test_dual_camera_pipeline.py` for a representative multi-camera orchestration test.
 
 **Detection Settings:**
 | Setting | Default | Description |
@@ -251,7 +259,7 @@ General system settings organized by category:
 | `interval` | `2.0` | Detection frequency (seconds) |
 | `confidence` | `0.25` | AI sensitivity (0.1-0.9) |
 | `motion_threshold` | `5` | Motion detection sensitivity |
-| `person_cooldown_seconds` | `30.0` | Cooldown between person detections |
+| `label_cooldown_seconds` | `30.0` | Cooldown between repeated alert labels |
 
 **Storage Settings:**
 | Setting | Default | Description |
