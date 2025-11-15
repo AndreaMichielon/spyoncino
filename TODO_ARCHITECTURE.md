@@ -141,6 +141,7 @@ src/spyoncino/
 - **Media Clips:** Added `MediaArtifact` payloads and `modules.event.clip_builder` to publish MP4 clips (`event.clip.ready`) following Appendix A backpressure limits.
 - **Control Surface:** Added FastAPI-based `modules.dashboard.control_api` that emits `ControlCommand` and `ConfigUpdate` events for camera toggles and zoning updates.
 - **Contract/Test Fixtures:** `core.contracts` gained `ControlCommand`, `ConfigUpdate`, and `ConfigSnapshotPayload`; new unit suites cover zoning, clips, control API, and orchestrator hot reload flows.
+- **Orchestrator CLI:** Introduced the `spyoncino-modular` entrypoint that boots the orchestrator with configurable presets, enables config hot reload by default, and exposes the Control API (port 8080) plus Prometheus telemetry (port 9093) as part of the standard runtime.
 
 ### Week 6 Spotlight
 
@@ -230,7 +231,7 @@ src/spyoncino/
 ### Legacy Parity (Week 6)
 | Item | Status | Notes |
 |------|--------|-------|
-| Modular orchestrator entrypoint & config wiring | Planned (Week 6) | `spyoncino.run` still proxies legacy CLI; need dedicated bootstrap instantiating `ConfigService` + modules. |
+| Modular orchestrator entrypoint & config wiring | ✅ Complete | `spyoncino-modular` (see `spyoncino.orchestrator_entrypoint`) wires ConfigService, hot reload, presets, and signal handling. |
 | Storage retention & analytics modules | Planned (Week 6) | Port `SecurityEventManager` retention loop + `EventLogger` into dedicated storage/analytics modules on the bus. |
 | Telegram notifier & control parity | Planned (Week 6) | Extend notifier/control bot for GIF/clip routing, rate limiting, admin commands matching legacy bot. |
 | Motion/person detection pipeline extraction | Planned (Week 6) | Wrap legacy motion/YOLO processing (anti-spam, GIF workflows) as modular processors. |

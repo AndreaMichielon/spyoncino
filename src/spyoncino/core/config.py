@@ -344,6 +344,20 @@ class ConfigSnapshot(BaseModel):
                 }
             )
 
+        def _usb_camera_config() -> ModuleConfig:
+            port = self.camera.usb_port
+            options: dict[str, Any] = {
+                "camera_id": self.camera.camera_id,
+                "fps": self.camera.fps,
+                "frame_width": self.camera.width,
+                "frame_height": self.camera.height,
+            }
+            if isinstance(port, int):
+                options["device_index"] = port
+            elif port is not None:
+                options["device_path"] = str(port)
+            return ModuleConfig(options=options)
+
         def _rtsp_camera_config() -> ModuleConfig:
             if not self.camera.rtsp_url:
                 raise KeyError("camera.rtsp_url must be configured for RTSP module.")
@@ -489,6 +503,7 @@ class ConfigSnapshot(BaseModel):
 
         builders: dict[str, Callable[[], ModuleConfig]] = {
             "modules.input.camera_simulator": _camera_sim_config,
+            "modules.input.usb_camera": _usb_camera_config,
             "modules.input.rtsp_camera": _rtsp_camera_config,
             "modules.process.motion_detector": _motion_detector_config,
             "modules.process.yolo_detector": _yolo_detector_config,

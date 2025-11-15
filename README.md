@@ -161,6 +161,26 @@ When you run the launcher it will:
    spyoncino
    ```
 
+### Modular Orchestrator Runner (Week 5+)
+
+Week 5 introduces the modular asyncio stack described in `TODO_ARCHITECTURE.md`. Run it with the new CLI:
+
+```bash
+spyoncino-modular --preset sim
+```
+
+- `--preset sim|usb|rtsp` selects the input module (camera simulator by default).
+- `--module clip --module yolo` appends extra modules; `--skip-module gif` removes defaults.
+- `--config-dir path/to/config` points to an alternate configuration bundle.
+- `--no-hot-reload` disables the `config.update` listener if you want a static config.
+
+When the runner starts it exposes:
+
+- **Control API:** `http://127.0.0.1:8080` (FastAPI) publishes `dashboard.control.command` and accepts `/config/zones` POSTs that flow through the config hot-reload loop.
+- **Prometheus metrics:** `http://127.0.0.1:9093/metrics` with bus queue depth, throughput, and drop counters for dashboards.
+
+`spyoncino-modular` keeps running until you press `Ctrl+C`; configuration edits applied via the Control API or other publishers immediately trigger reconfiguration without restarting modules.
+
 ## Security Setup
 
 ### First-Time Configuration

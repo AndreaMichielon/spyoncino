@@ -39,6 +39,7 @@ dependencies = [
 
 [project.scripts]
 spyoncino = "spyoncino.run:main"
+spyoncino-modular = "spyoncino.orchestrator_entrypoint:main"
 
 [project.urls]
 Homepage = "https://github.com/AndreaMichielon/spyoncino"
