@@ -87,8 +87,6 @@ class ClipBuilder(BaseModule):
     async def _handle_frame(self, topic: str, payload: Frame) -> None:
         if not isinstance(payload, Frame):
             return
-        if payload.image_bytes is None:
-            return
         buffer = self._frames[payload.camera_id]
         buffer.append(payload)
 
@@ -126,19 +124,22 @@ class ClipBuilder(BaseModule):
         path = self._output_dir / filename
         images: list[np.ndarray] = []
         for frame in frames:
-            if frame.image_bytes is None:
+            if frame.data_ref:
+                img = iio.imread(frame.data_ref)
+            elif frame.image_bytes is not None:
+                with io.BytesIO(frame.image_bytes) as buffer:
+                    extension = ".png"
+                    if frame.content_type and "jpeg" in frame.content_type:
+                        extension = ".jpg"
+                    img = iio.imread(buffer, extension=extension)
+            else:
                 continue
-            with io.BytesIO(frame.image_bytes) as buffer:
-                extension = ".png"
-                if frame.content_type and "jpeg" in frame.content_type:
-                    extension = ".jpg"
-                img = iio.imread(buffer, extension=extension)
-                if self._max_dimension and max(img.shape[:2]) > self._max_dimension:
-                    scale = self._max_dimension / max(img.shape[0], img.shape[1])
-                    new_w = int(img.shape[1] * scale)
-                    new_h = int(img.shape[0] * scale)
-                    img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                images.append(img)
+            if self._max_dimension and max(img.shape[:2]) > self._max_dimension:
+                scale = self._max_dimension / max(img.shape[0], img.shape[1])
+                new_w = int(img.shape[1] * scale)
+                new_h = int(img.shape[0] * scale)
+                img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            images.append(img)
         if not images:
             raise RuntimeError("Failed to decode frames for clip generation.")
         await asyncio.to_thread(

@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as dt
 import io
 import logging
 from collections.abc import Callable
+from pathlib import Path
 
 import imageio.v3 as iio
 import numpy as np
@@ -91,6 +93,7 @@ class RtspCamera(BaseModule):
         self._max_retries = 5
         self._retry_backoff = 1.0
         self._sequence = 0
+        self._buffer_dir = Path("recordings") / "frames" / self._camera_id
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -102,12 +105,16 @@ class RtspCamera(BaseModule):
         self._encoding = encoding if encoding.startswith(".") else f".{encoding}"
         self._max_retries = int(options.get("max_retries", self._max_retries))
         self._retry_backoff = float(options.get("retry_backoff", self._retry_backoff))
+        self._buffer_dir = Path(
+            options.get("buffer_dir", Path("recordings") / "frames" / self._camera_id)
+        )
 
     async def start(self) -> None:
         if not self._rtsp_url:
             raise RuntimeError("RtspCamera requires an rtsp_url to be configured.")
         self._client = self._client_factory(self._rtsp_url)
         await self._client.connect()
+        self._buffer_dir.mkdir(parents=True, exist_ok=True)
         self._running.set()
         self._task = asyncio.create_task(self._run(), name=f"{self.name}-loop")
         logger.info("RTSP camera %s connected to %s", self._camera_id, self._rtsp_url)
@@ -156,12 +163,17 @@ class RtspCamera(BaseModule):
                 content_type = "image/png"
             else:
                 content_type = "application/octet-stream"
+            # Persist to rolling buffer on disk and publish reference only
+            timestamp = dt.datetime.now(tz=dt.UTC).strftime("%Y%m%d_%H%M%S_%f")
+            filename = f"{self._camera_id}_{self._sequence}_{timestamp}{self._encoding}"
+            path = self._buffer_dir / filename
+            await asyncio.to_thread(path.write_bytes, frame_bytes)
             payload = Frame(
                 camera_id=self._camera_id,
                 sequence_id=self._sequence,
-                data_ref=f"rtsp://{self._camera_id}/{self._sequence}",
+                data_ref=str(path.resolve()),
                 metadata=metadata,
-                image_bytes=frame_bytes,
+                image_bytes=None,
                 content_type=content_type,
             )
             await self.bus.publish(f"camera.{self._camera_id}.frame", payload)

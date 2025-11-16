@@ -189,8 +189,11 @@ dashboards:
     idle_timeout_seconds: 30       # Close connection if idle for this many seconds
   modules:
     - module: modules.dashboard.control_api      # Run the FastAPI control plane
+      additive: true
     - module: modules.dashboard.websocket_gateway  # Run the websocket streaming module
+      additive: true
     - module: modules.dashboard.telegram_bot       # Run the Telegram control bot
+      additive: true
 
 # =============================================================================
 # OUTPUTS (rate limiter + notifier manifests)
@@ -204,13 +207,17 @@ outputs:
     key_field: "camera_id"                 # Apply throttle separately per this field
   modules:
     - module: modules.output.telegram_notifier   # Primary Telegram notifier
+      additive: true
     - module: modules.output.telegram_notifier   # Optional backup notifier (disabled)
-      enabled: false
+      enabled: true
+      additive: true
       options:
         message_template: "Backup notifier - motion on {camera_id}"
     - module: modules.output.email_notifier      # Email notifier (disabled by default)
       enabled: false
+      additive: true
     - module: modules.output.webhook_notifier    # Webhook notifier (disabled by default)
       enabled: false
+      additive: true
       options:
         require_https: true        # Enforce https:// URLs unless explicitly disabled

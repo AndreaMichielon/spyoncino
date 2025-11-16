@@ -146,17 +146,10 @@ class YoloDetector(BaseModule):
         if not isinstance(payload, Frame):
             logger.debug("YoloDetector received unsupported payload on %s", topic)
             return
-        if payload.image_bytes is None:
-            logger.debug(
-                "Skipping frame %s because no image bytes were provided.", payload.data_ref
-            )
-            return
         if self._predictor is None:
             logger.warning("YoloDetector has no predictor configured; dropping frame.")
             return
-        image_array = await asyncio.to_thread(
-            self._decode_image, payload.image_bytes, payload.content_type
-        )
+        image_array = await asyncio.to_thread(self._decode_frame_image, payload)
         candidates = await asyncio.to_thread(self._predictor.predict, image_array)
         frame_meta = {
             "width": int(image_array.shape[1]),
@@ -204,6 +197,14 @@ class YoloDetector(BaseModule):
                 elif "gif" in content_type:
                     extension = ".gif"
             return iio.imread(buffer, extension=extension)
+
+    def _decode_frame_image(self, frame: Frame) -> np.ndarray:
+        if frame.data_ref:
+            return iio.imread(frame.data_ref)
+        if frame.image_bytes is not None:
+            return self._decode_image(frame.image_bytes, frame.content_type)
+        # As a last resort, return a minimal black image to avoid crashing the pipeline
+        return np.zeros((1, 1, 3), dtype=np.uint8)
 
 
 __all__ = [

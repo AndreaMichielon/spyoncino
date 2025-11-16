@@ -65,8 +65,8 @@ class MotionDetector(BaseModule):
             if not isinstance(payload, Frame):
                 logger.debug("Ignoring payload on %s that is not a Frame: %s", topic, type(payload))
                 return
-            if payload.image_bytes is None:
-                # No pixels to evaluate; skip gracefully.
+            if payload.data_ref is None and payload.image_bytes is None:
+                # No pixels available in any form; skip gracefully.
                 return
 
             state = self._states.setdefault(payload.camera_id, _CameraState())
@@ -78,9 +78,7 @@ class MotionDetector(BaseModule):
                 # Throttle evaluations to the configured cadence.
                 return
 
-            gray = await asyncio.to_thread(
-                self._decode_to_gray, payload.image_bytes, payload.content_type
-            )
+            gray = await asyncio.to_thread(self._decode_frame_gray, payload)
 
             motion_percent = 0
             if state.last_gray is not None and state.last_gray.shape == gray.shape:
@@ -129,6 +127,7 @@ class MotionDetector(BaseModule):
             )
 
     def _decode_to_gray(self, image_bytes: bytes, content_type: str | None) -> np.ndarray:
+        # legacy helper (kept for compatibility)
         extension = ".png"
         if content_type:
             ct = content_type.lower()
@@ -141,13 +140,37 @@ class MotionDetector(BaseModule):
         if image.ndim == 2:
             gray = image.astype(np.uint8, copy=False)
         else:
-            # Convert RGB/RGBA to grayscale using luminosity method
             if image.shape[-1] == 4:
                 image = image[..., :3]
-            # weights: 0.299 R, 0.587 G, 0.114 B
             gray = np.dot(image[..., :3], np.array([0.299, 0.587, 0.114], dtype=np.float32))
             gray = np.clip(gray, 0, 255).astype(np.uint8)
         return gray
+
+    def _decode_frame_gray(self, frame: Frame) -> np.ndarray:
+        image = iio.imread(frame.data_ref) if frame.data_ref else self._decode_to_rgb(frame)
+        if image.ndim == 2:
+            return image.astype(np.uint8, copy=False)
+        if image.shape[-1] == 4:
+            image = image[..., :3]
+        gray = np.dot(image[..., :3], np.array([0.299, 0.587, 0.114], dtype=np.float32))
+        return np.clip(gray, 0, 255).astype(np.uint8)
+
+    def _decode_to_rgb(self, frame: Frame) -> np.ndarray:
+        extension = ".png"
+        if frame.content_type:
+            ct = frame.content_type.lower()
+            if "jpeg" in ct or "jpg" in ct:
+                extension = ".jpg"
+            elif "gif" in ct:
+                extension = ".gif"
+        with io.BytesIO(frame.image_bytes or b"") as buffer:
+            image = iio.imread(buffer, extension=extension)
+        if image.ndim == 2:
+            # grayscale to 3-channel
+            return np.repeat(image[..., None], 3, axis=2)
+        if image.shape[-1] == 4:
+            return image[..., :3]
+        return image
 
 
 def cv2_absdiff(a: np.ndarray, b: np.ndarray) -> np.ndarray:

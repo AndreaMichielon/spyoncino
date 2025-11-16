@@ -88,8 +88,6 @@ class GifBuilder(BaseModule):
     async def _handle_frame(self, topic: str, payload: Frame) -> None:
         if not isinstance(payload, Frame):
             return
-        if payload.image_bytes is None:
-            return
         buffer = self._frames[payload.camera_id]
         buffer.append(payload)
 
@@ -165,14 +163,17 @@ class GifBuilder(BaseModule):
         return resized_frames
 
     def _decode_frame(self, frame: Frame) -> np.ndarray:
-        extension = ".png"
-        if frame.content_type:
-            if "jpeg" in frame.content_type or "jpg" in frame.content_type:
-                extension = ".jpg"
-            elif "gif" in frame.content_type:
-                extension = ".gif"
-        with io.BytesIO(frame.image_bytes or b"") as buffer:
-            image = iio.imread(buffer, extension=extension)
+        if frame.data_ref:
+            image = iio.imread(frame.data_ref)
+        else:
+            extension = ".png"
+            if frame.content_type:
+                if "jpeg" in frame.content_type or "jpg" in frame.content_type:
+                    extension = ".jpg"
+                elif "gif" in frame.content_type:
+                    extension = ".gif"
+            with io.BytesIO(frame.image_bytes or b"") as buffer:
+                image = iio.imread(buffer, extension=extension)
         if image.ndim == 2:
             image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
         elif image.shape[-1] == 4:

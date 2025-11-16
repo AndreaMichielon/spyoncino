@@ -29,7 +29,7 @@ class FakeRtspClient:
 
 
 @pytest.mark.asyncio
-async def test_rtsp_camera_emits_frames() -> None:
+async def test_rtsp_camera_emits_frames(tmp_path) -> None:
     bus = EventBus(telemetry_enabled=False)
     await bus.start()
 
@@ -47,6 +47,7 @@ async def test_rtsp_camera_emits_frames() -> None:
                 "camera_id": "lab",
                 "rtsp_url": "rtsp://example.test/stream",
                 "fps": 0,
+                "buffer_dir": str(tmp_path),
             }
         )
     )

@@ -153,7 +153,6 @@ COMMON_PIPELINE_MODULES: list[str] = [
     "modules.dashboard.telegram_bot",
     "modules.dashboard.websocket_gateway",
     "modules.status.prometheus_exporter",
-    "modules.status.resilience_tester",
     "modules.storage.retention",
     "modules.storage.s3_uploader",
     "modules.analytics.db_logger",
@@ -257,6 +256,13 @@ async def run_pipeline(
             LOGGER.info("No configuration produced for %s; skipping", name)
             continue
         for module_config in module_configs:
+            # Skip disabled configs (either top-level or nested option)
+            if hasattr(module_config, "enabled") and module_config.enabled is False:
+                LOGGER.info("Config disabled for %s; skipping", name)
+                continue
+            if module_config.options.get("enabled") is False:
+                LOGGER.info("Options mark %s as disabled; skipping", name)
+                continue
             module = module_cls()
             await orchestrator.add_module(module, module_config)
             added += 1
@@ -275,6 +281,30 @@ async def run_pipeline(
         snapshot.control_api.port,
     )
     LOGGER.info("Prometheus metrics will be exposed on 127.0.0.1:9093")
+
+    # Warn if control surfaces are exposed without TLS
+    def _is_loopback(host: str) -> bool:
+        h = (host or "").strip()
+        return h in ("127.0.0.1", "localhost", "::1")
+
+    if (
+        snapshot.control_api.serve_api
+        and not _is_loopback(snapshot.control_api.host)
+        and not snapshot.control_api.tls.enabled
+    ):
+        LOGGER.warning(
+            "Control API is bound to %s without TLS. Consider enabling TLS or using a reverse proxy.",
+            snapshot.control_api.host,
+        )
+    if (
+        snapshot.websocket_gateway.serve_http
+        and not _is_loopback(snapshot.websocket_gateway.host)
+        and not snapshot.websocket_gateway.tls.enabled
+    ):
+        LOGGER.warning(
+            "Websocket gateway is bound to %s without TLS. Consider enabling TLS or using a reverse proxy.",
+            snapshot.websocket_gateway.host,
+        )
 
     stop_event = asyncio.Event()
     _install_signal_handlers(stop_event)

@@ -93,13 +93,6 @@ class SnapshotWriter(BaseModule):
     async def _handle_frame(self, topic: str, payload: Frame) -> None:
         if not isinstance(payload, Frame):
             return
-        if payload.image_bytes is None:
-            logger.debug(
-                "Skipping frame on %s from %s because no image bytes were provided",
-                topic,
-                payload.camera_id,
-            )
-            return
         self._frame_cache[payload.camera_id] = payload
 
     async def _handle_detection(self, topic: str, payload: DetectionEvent) -> None:
@@ -109,7 +102,7 @@ class SnapshotWriter(BaseModule):
             logger.debug("Ignoring detection on %s because triggered=False", topic)
             return
         frame = self._frame_cache.get(payload.camera_id)
-        if frame is None or frame.image_bytes is None:
+        if frame is None or (frame.image_bytes is None and not frame.data_ref):
             logger.warning(
                 "No cached frame available for camera %s; skipping snapshot.",
                 payload.camera_id,
@@ -151,14 +144,17 @@ class SnapshotWriter(BaseModule):
         return path
 
     def _decode_frame(self, frame: Frame) -> np.ndarray:
-        extension = ".png"
-        if frame.content_type:
-            if "jpeg" in frame.content_type or "jpg" in frame.content_type:
-                extension = ".jpg"
-            elif "gif" in frame.content_type:
-                extension = ".gif"
-        with io.BytesIO(frame.image_bytes or b"") as buffer:
-            image = iio.imread(buffer, extension=extension)
+        # Prefer reading from persisted file if available
+        if frame.data_ref:
+            try:
+                image = iio.imread(frame.data_ref)
+            except Exception:
+                # Fallback to inline bytes when present
+                with io.BytesIO(frame.image_bytes or b"") as buffer:
+                    image = iio.imread(buffer, extension=self._extension)
+        else:
+            with io.BytesIO(frame.image_bytes or b"") as buffer:
+                image = iio.imread(buffer, extension=self._extension)
         if image.ndim == 2:
             image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
         elif image.shape[-1] == 4:

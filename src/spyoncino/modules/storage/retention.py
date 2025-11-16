@@ -42,6 +42,9 @@ class StorageRetention(BaseModule):
         self._low_space_threshold_gb = 1.0
         self._cleanup_interval = 600.0
         self._artifact_globs: list[str] = [
+            "frames/**/*.png",
+            "frames/**/*.jpg",
+            "frames/**/*.jpeg",
             "snapshots/*.png",
             "snapshots/*.jpg",
             "gifs/*.gif",

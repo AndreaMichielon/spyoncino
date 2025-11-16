@@ -135,12 +135,14 @@ def sample_config_dir(tmp_path: Path) -> Path:
         key_field: "camera_id"
       modules:
         - module: "modules.output.telegram_notifier"
+          additive: true
           options:
             token: "@secrets telegram.token"
             chat_id: "@secrets telegram.chat_id"
             read_timeout: 5
             write_timeout: 7
         - module: "modules.output.telegram_notifier"
+          additive: true
           options:
             token: "@secrets telegram.token"
             chat_id: 777777

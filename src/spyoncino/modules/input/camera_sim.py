@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as dt
 import io
 import itertools
 import logging
+from pathlib import Path
 
 import imageio.v3 as iio
 import numpy as np
@@ -47,6 +49,7 @@ class CameraSimulator(BaseModule):
         self._sequence = itertools.count()
         self._task: asyncio.Task[None] | None = None
         self._running = asyncio.Event()
+        self._buffer_dir = Path("recordings") / "frames" / self._camera_id
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -55,6 +58,9 @@ class CameraSimulator(BaseModule):
         self._interval = float(options.get("interval_seconds", self._interval))
         self._frame_width = int(options.get("frame_width", self._frame_width))
         self._frame_height = int(options.get("frame_height", self._frame_height))
+        self._buffer_dir = Path(
+            options.get("buffer_dir", Path("recordings") / "frames" / self._camera_id)
+        )
         # Optional simulator knobs (safe defaults for tests; can be disabled for prod)
         self._bootstrap_two_frames = bool(
             options.get("bootstrap_two_frames", self._bootstrap_two_frames)
@@ -70,6 +76,7 @@ class CameraSimulator(BaseModule):
 
     async def start(self) -> None:
         self._running.set()
+        self._buffer_dir.mkdir(parents=True, exist_ok=True)
         self._task = asyncio.create_task(self._run(), name=f"{self.name}-publisher")
         logger.info(
             "CameraSimulator for camera %s emitting every %.2fs",
@@ -100,12 +107,12 @@ class CameraSimulator(BaseModule):
             frame = Frame(
                 camera_id=self._camera_id,
                 sequence_id=seq,
-                data_ref=f"memory://frame/{self._camera_id}/{seq}",
+                data_ref=str(self._persist_frame(seq, image_bytes)),
                 metadata={
                     "width": self._frame_width,
                     "height": self._frame_height,
                 },
-                image_bytes=image_bytes,
+                image_bytes=None,
                 content_type="image/png",
             )
             await self.bus.publish(f"camera.{self._camera_id}.frame", frame)
@@ -117,12 +124,12 @@ class CameraSimulator(BaseModule):
                 frame = Frame(
                     camera_id=self._camera_id,
                     sequence_id=seq,
-                    data_ref=f"memory://frame/{self._camera_id}/{seq}",
+                    data_ref=str(self._persist_frame(seq, image_bytes)),
                     metadata={
                         "width": self._frame_width,
                         "height": self._frame_height,
                     },
-                    image_bytes=image_bytes,
+                    image_bytes=None,
                     content_type="image/png",
                 )
                 await self.bus.publish(f"camera.{self._camera_id}.frame", frame)
@@ -152,3 +159,10 @@ class CameraSimulator(BaseModule):
         with io.BytesIO() as buffer:
             iio.imwrite(buffer, frame, extension=".png")
             return buffer.getvalue()
+
+    def _persist_frame(self, sequence: int, image_bytes: bytes) -> Path:
+        timestamp = dt.datetime.now(tz=dt.UTC).strftime("%Y%m%d_%H%M%S_%f")
+        filename = f"{self._camera_id}_{sequence}_{timestamp}.png"
+        path = self._buffer_dir / filename
+        path.write_bytes(image_bytes)
+        return path.resolve()

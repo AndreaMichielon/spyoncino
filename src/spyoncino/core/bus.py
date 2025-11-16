@@ -66,6 +66,7 @@ class EventBus:
         self._processed_total = 0
         self._dropped_total = 0
         self._interceptors: list[Interceptor] = []
+        self._topic_depth: dict[str, int] = defaultdict(int)
         now = time.monotonic()
         self._last_publish_ts = now
         self._last_dispatch_ts = now
@@ -118,6 +119,8 @@ class EventBus:
         if self._queue.full():
             logger.warning("Event bus queue is full; publisher will wait for free space.")
         await self._queue.put((topic_to_publish, payload_to_publish))
+        # track per-topic depth approximately at enqueue time
+        self._topic_depth[topic_to_publish] += 1
         logger.debug("Queued payload for topic %s", topic_to_publish)
 
     async def start(self) -> None:
@@ -163,6 +166,11 @@ class EventBus:
                 logger.debug("Dispatching payload on topic %s to %d handlers", topic, len(handlers))
                 if not handlers:
                     continue
+
+                # decrement per-topic depth when we begin dispatch (avoid exceptions)
+                current_depth = self._topic_depth.get(topic, 0)
+                if current_depth > 0:
+                    self._topic_depth[topic] = current_depth - 1
 
                 # Schedule handlers asynchronously to avoid deadlocks when handlers publish
                 # back into the bus (queue backpressure while dispatcher awaits handlers).
@@ -232,6 +240,7 @@ class EventBus:
         return BusStatus(
             queue_depth=depth,
             queue_capacity=capacity,
+            per_topic_depth=dict(self._topic_depth),
             subscriber_count=subscriber_count,
             topic_count=topic_count,
             published_total=self._published_total,

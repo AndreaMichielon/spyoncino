@@ -122,7 +122,7 @@ class RecordingUsbClient:
 
 
 @pytest.mark.asyncio
-async def test_usb_camera_publishes_frames_with_metadata() -> None:
+async def test_usb_camera_publishes_frames_with_metadata(tmp_path) -> None:
     bus = EventBus(telemetry_enabled=False)
     await bus.start()
 
@@ -146,6 +146,7 @@ async def test_usb_camera_publishes_frames_with_metadata() -> None:
                 "frame_height": 240,
                 "encoding": "png",
                 "fps": 0,
+                "buffer_dir": str(tmp_path),
             }
         )
     )
@@ -173,7 +174,7 @@ async def test_usb_camera_publishes_frames_with_metadata() -> None:
 
 
 @pytest.mark.asyncio
-async def test_usb_camera_reconnects_after_consecutive_failures() -> None:
+async def test_usb_camera_reconnects_after_consecutive_failures(tmp_path) -> None:
     bus = EventBus(telemetry_enabled=False)
     await bus.start()
 
@@ -193,6 +194,7 @@ async def test_usb_camera_reconnects_after_consecutive_failures() -> None:
                 "max_retries": 1,
                 "retry_backoff": 0.01,
                 "fps": None,
+                "buffer_dir": str(tmp_path),
             }
         )
     )
@@ -213,7 +215,7 @@ async def test_usb_camera_reconnects_after_consecutive_failures() -> None:
 
 
 @pytest.mark.asyncio
-async def test_usb_camera_can_drop_blank_frames_when_enabled() -> None:
+async def test_usb_camera_can_drop_blank_frames_when_enabled(tmp_path) -> None:
     bus = EventBus(telemetry_enabled=False)
     await bus.start()
 
@@ -235,6 +237,7 @@ async def test_usb_camera_can_drop_blank_frames_when_enabled() -> None:
                 "max_retries": 5,
                 "retry_backoff": 0.001,
                 "fps": None,
+                "buffer_dir": str(tmp_path),
             }
         )
     )

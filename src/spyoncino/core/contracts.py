@@ -27,7 +27,14 @@ class BasePayload(BaseModel):
 
 
 class Frame(BasePayload):
-    """Image frame captured by an input module."""
+    """
+    Image frame captured by an input module.
+
+    Prefer path/reference-based flow: producers should persist the binary to disk
+    and populate `data_ref` with the absolute path. Inline `image_bytes` should
+    remain None under normal operation. An optional `thumbnail_bytes` may be
+    provided for small previews when explicitly enabled.
+    """
 
     camera_id: str
     timestamp_utc: dt.datetime = Field(
@@ -46,11 +53,15 @@ class Frame(BasePayload):
     )
     image_bytes: bytes | None = Field(
         default=None,
-        description="Optional encoded image bytes (PNG/JPEG) for downstream modules.",
+        description="Deprecated for normal operation. Encoded image bytes (PNG/JPEG). Prefer data_ref.",
     )
     content_type: str | None = Field(
         default=None,
         description="MIME type describing `image_bytes` payload.",
+    )
+    thumbnail_bytes: bytes | None = Field(
+        default=None,
+        description="Optional small preview (e.g., <32KB). Only when explicitly enabled.",
     )
 
 
@@ -100,6 +111,9 @@ class BusStatus(BasePayload):
 
     queue_depth: int = Field(ge=0, description="Current number of queued events.")
     queue_capacity: int = Field(gt=0, description="Maximum queue capacity.")
+    per_topic_depth: dict[str, int] = Field(
+        default_factory=dict, description="Approximate queued events per topic."
+    )
     subscriber_count: int = Field(ge=0, description="Total registered handlers.")
     topic_count: int = Field(ge=0, description="Unique topics with subscribers.")
     published_total: int = Field(ge=0, description="Cumulative published events.")

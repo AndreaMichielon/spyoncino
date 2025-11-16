@@ -612,6 +612,18 @@ class ModuleManifestEntry(BaseModel):
         description="Fully qualified module name, e.g. modules.output.telegram_notifier."
     )
     enabled: bool = Field(default=True)
+    additive: bool = Field(
+        default=False,
+        description="When true, manifests add extra instances and never override defaults.",
+    )
+    depends_on: list[str] = Field(
+        default_factory=list,
+        description="Optional list of module names this entry depends on (startup order).",
+    )
+    phase: str | None = Field(
+        default=None,
+        description="Optional coarse grouping hint (e.g., inputs/process/events/outputs).",
+    )
     camera_id: str | None = Field(
         default=None, description="Optional camera binding for per-camera module instances."
     )
@@ -622,6 +634,9 @@ class ModuleManifestEntry(BaseModel):
         """Translate manifest entries into ModuleConfig objects consumed by modules."""
 
         options = dict(self.options)
+        # Pass-through dependencies to ModuleConfig options so the orchestrator can read them
+        if self.depends_on and "depends_on" not in options:
+            options["depends_on"] = list(self.depends_on)
         if self.camera_id and "camera_id" not in options:
             options["camera_id"] = self.camera_id
         return ModuleConfig(enabled=self.enabled, options=options)
@@ -1107,11 +1122,22 @@ class ConfigSnapshot(BaseModel):
         return None
 
     def _manifest_entries(self, module_name: str) -> list[ModuleManifestEntry]:
-        """Return manifest-bound module entries for the requested module name."""
+        """Return additive-only manifest entries for the requested module name.
+
+        Manifests are treated as additive-only: they can add extra instances of modules,
+        but never replace the default builder-derived configuration. To opt-in, entries
+        must set `additive: true`.
+        """
 
         matches: list[ModuleManifestEntry] = []
         for collection in (self.outputs, self.dashboards, self.modules):
-            matches.extend(entry for entry in collection if entry.module == module_name)
+            for entry in collection:
+                if entry.module != module_name:
+                    continue
+                if not entry.additive:
+                    # Ignore non-additive entries to keep default config as the primary source
+                    continue
+                matches.append(entry)
         return matches
 
     def _apply_manifest_defaults(self, module_name: str, config: ModuleConfig) -> ModuleConfig:

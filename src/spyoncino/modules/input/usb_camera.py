@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as dt
 import io
 import logging
 from collections.abc import Callable
+from pathlib import Path
 
 import imageio.v3 as iio
 import numpy as np
@@ -122,6 +124,7 @@ class UsbCamera(BaseModule):
         self._frame_height: int | None = None
         self._sequence = 0
         self._drop_blank_frames = False
+        self._buffer_dir = Path("recordings") / "frames" / self._camera_id
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -145,12 +148,16 @@ class UsbCamera(BaseModule):
         height = options.get("frame_height", self._frame_height)
         self._frame_height = int(height) if height is not None else None
         self._drop_blank_frames = bool(options.get("drop_blank_frames", self._drop_blank_frames))
+        self._buffer_dir = Path(
+            options.get("buffer_dir", Path("recordings") / "frames" / self._camera_id)
+        )
 
     async def start(self) -> None:
         if self._source is None:
             raise RuntimeError("UsbCamera requires a device_index or device_path.")
         self._client = self._client_factory(self._source, self._frame_width, self._frame_height)
         await self._client.connect()
+        self._buffer_dir.mkdir(parents=True, exist_ok=True)
         self._running.set()
         self._task = asyncio.create_task(self._run(), name=f"{self.name}-loop")
         logger.info("USB camera %s connected to source %s", self._camera_id, self._source)
@@ -215,9 +222,9 @@ class UsbCamera(BaseModule):
             payload = Frame(
                 camera_id=self._camera_id,
                 sequence_id=self._sequence,
-                data_ref=f"usb://{self._camera_id}/{self._sequence}",
+                data_ref=str(self._persist_frame(frame_bytes)),
                 metadata=metadata,
-                image_bytes=frame_bytes,
+                image_bytes=None,
                 content_type=content_type,
             )
             await self.bus.publish(f"camera.{self._camera_id}.frame", payload)
@@ -237,6 +244,13 @@ class UsbCamera(BaseModule):
         if frame.size == 0:
             return True
         return not frame.any()
+
+    def _persist_frame(self, frame_bytes: bytes) -> Path:
+        timestamp = dt.datetime.now(tz=dt.UTC).strftime("%Y%m%d_%H%M%S_%f")
+        filename = f"{self._camera_id}_{self._sequence}_{timestamp}{self._encoding}"
+        path = self._buffer_dir / filename
+        path.write_bytes(frame_bytes)
+        return path.resolve()
 
 
 __all__ = ["UsbCamera", "UsbCaptureClient"]
