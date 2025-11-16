@@ -39,22 +39,18 @@ def sample_config_dir(tmp_path: Path) -> Path:
         window_seconds: 0.5
       notifications:
         output_for_motion: "text"
-        output_for_detection: "gif"
+        output_for_detection: "video"  # Changed to "video" so clips are enabled
         gif:
           duration_seconds: 2
           fps: 8
           max_frames: 8
         video:
+          enabled: true
           duration_seconds: 0.5
           fps: 4
           max_file_size_mb: 25
-      media_artifacts:
-        enabled: true
-        detection_topic: "process.motion.unique"
-        output_topic: "event.clip.ready"
-        duration_seconds: 0.5
-        fps: 4
-        max_artifacts: 2
+          max_artifacts: 2
+      # media_artifacts is now consolidated into notifications.video above
       zoning:
         enabled: true
         input_topic: "process.motion.unique"

@@ -537,13 +537,31 @@ class TelegramNotifier(BaseModule):
         return f"[{ts}] {prefix}{label} on {camera_id}"
 
     def _event_label_from_metadata(self, metadata: dict[str, Any]) -> str:
-        """Infer Motion vs Detection from the upstream detection payload."""
+        """
+        Infer a human-readable label (Motion vs object label) from detection metadata.
+
+        - Any detector_id that looks like a motion detector (e.g. "motion", "motion-basic")
+          is rendered as "Motion".
+        - For object detectors (e.g. YOLO) we prefer the concrete label ("Person",
+          "Dog", etc.) when available.
+        - When we can't confidently infer an object label, we fall back to a generic
+          "Detection".
+        """
         detection = metadata.get("detection") or {}
         detector_id = str(detection.get("detector_id", "")).lower()
-        if detector_id == "motion":
+
+        # Treat all motion-style detectors as Motion (e.g. "motion-basic", "motion.v2").
+        if detector_id.startswith("motion"):
             return "Motion"
-        # Heuristics: presence of bbox/detections implies object detection
+
         attributes = detection.get("attributes") or {}
+
+        # Prefer a concrete label from attributes when present (YOLO-style detections).
+        raw_label = attributes.get("label")
+        if isinstance(raw_label, str) and raw_label.strip():
+            return raw_label.strip().capitalize()
+
+        # Heuristics: presence of bbox/detections implies object detection
         if attributes.get("bbox"):
             return "Detection"
         nested = attributes.get("detections")
@@ -551,6 +569,7 @@ class TelegramNotifier(BaseModule):
             isinstance(entry, dict) and entry.get("bbox") for entry in nested
         ):
             return "Detection"
+
         # Fallback: if confidence indicates classifier-style, prefer Detection
         try:
             conf = float(detection.get("confidence", 0.0))
@@ -558,6 +577,9 @@ class TelegramNotifier(BaseModule):
                 return "Detection"
         except (TypeError, ValueError):
             pass
+
+        # Ultimate fallback is Motion so "noisy" detections without structure
+        # don't show up as generic "Detection".
         return "Motion"
 
     def _extract_compact_timestamp(self, metadata: dict[str, Any]) -> str:

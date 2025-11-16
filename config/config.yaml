@@ -71,10 +71,12 @@ detection:
     #       action: "include"      # include|exclude; action decides whether detection is kept
 
   notifications:
-    output_for_motion: "text"      # null/text/snap/gif/video – what to send on motion-only events
-    output_for_detection: "gif"    # null/text/snap/gif/video – what to send on person/object events
+    # High‑level switches that control what ends up in Telegram (and which
+    # artifact builders are wired by default). These are the ONLY knobs most
+    # users need to touch.
+    output_for_motion: "gif"        # null/text/snap/gif/video – what to send on motion-only events
+    output_for_detection: "video"   # null/text/snap/gif/video – what to send on person/object events
 
-    # Anti-spam cooldown settings (applies to all notification types: snapshots, GIFs, clips)
     cooldown_enabled: true         # Enable cooldown filtering to prevent duplicate notifications
     cooldown_seconds: 30.0         # Minimum seconds between notifications per camera/type
     bbox_iou_threshold: 0.6       # IoU threshold for bbox overlap detection (0-1, higher = stricter)
@@ -90,18 +92,12 @@ detection:
       max_file_size_mb: 50.0       # Upper bound for GIF payload size
 
     video:
+      enabled: true                # Disable to skip clip generation entirely
       max_dimension: 640           # Max width or height in pixels (aspect preserved)
-      fps: 12                      # Clip FPS when sharing via notifier
-      duration_seconds: 5.0        # Seconds captured per clip when sent via notifier
+      fps: 12                      # Clip FPS for both on-disk storage and Telegram
+      duration_seconds: 5.0        # Seconds captured per clip
       max_file_size_mb: 50.0       # Upper bound for clip payload size
-
-  media_artifacts:
-    enabled: true                  # Disable to skip clip generation entirely
-    detection_topic: "process.motion.unique"   # Source detections to clip around
-    output_topic: "event.clip.ready"           # Bus topic for finished MP4s
-    duration_seconds: 5.0          # Clip length (seconds before/after detection)
-    fps: 12                        # Clip FPS for on-disk output
-    max_artifacts: 25              # How many clips to retain on disk before pruning
+      max_artifacts: 25            # How many clips to retain on disk before pruning
 
 # =============================================================================
 # STORAGE
@@ -214,10 +210,6 @@ outputs:
   modules:
     - module: modules.output.telegram_notifier   # Telegram notifier
       additive: true
-      options:
-        # Route motion snapshots through the rate limiter output
-        topic: "event.snapshot.allowed"
-        # Keep delivery modes and captions hardcoded in module (legacy style)
     - module: modules.output.email_notifier      # Email notifier (disabled by default)
       enabled: false
       additive: true

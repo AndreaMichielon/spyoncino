@@ -300,6 +300,12 @@ class NotificationSettings(BaseModel):
     def wants_detection_gif(self) -> bool:
         return (self.output_for_detection or "").lower() == "gif"
 
+    def wants_motion_video(self) -> bool:
+        return (self.output_for_motion or "").lower() == "video"
+
+    def wants_detection_video(self) -> bool:
+        return (self.output_for_detection or "").lower() == "video"
+
 
 class RateLimitSettings(BaseModel):
     """Throttle outgoing notifications."""
@@ -867,18 +873,36 @@ class ConfigSnapshot(BaseModel):
             )
 
         def _clip_builder_config() -> ModuleConfig:
+            # Wire clip builder based on notification preferences, similar to GIF builder
+            # If we want video for detections, listen to alert pipeline; if for motion, listen to dedupe
+            # Prioritize detection if both are wanted (consistent with GIF builder behavior)
+            detection_topic = (
+                self.alert_pipeline.output_topic
+                if self.notifications.wants_detection_video()
+                else (
+                    self.dedupe.output_topic
+                    if self.notifications.wants_motion_video()
+                    else self.clip.detection_topic
+                )
+            )
+            # Only enable if we actually want video for either motion or detection
+            enabled = self.clip.enabled and (
+                self.notifications.wants_motion_video()
+                or self.notifications.wants_detection_video()
+            )
             return ModuleConfig(
+                enabled=enabled,
                 options={
-                    "enabled": self.clip.enabled,
+                    "enabled": enabled,  # ClipBuilder reads from options
                     "frame_topics": self.camera_topics(),
-                    "detection_topic": self.clip.detection_topic,
+                    "detection_topic": detection_topic,
                     "output_topic": self.clip.output_topic,
                     "output_dir": str(self.storage.clip_dir),
                     "fps": self.clip.fps,
                     "duration_seconds": self.clip.duration_seconds,
                     "max_artifacts": self.clip.max_artifacts,
                     "max_dimension": self.notifications.video.max_dimension,
-                }
+                },
             )
 
         def _zoning_filter_config() -> ModuleConfig:
@@ -946,12 +970,37 @@ class ConfigSnapshot(BaseModel):
         def _telegram_notifier_config() -> ModuleConfig:
             chat_id = self._default_chat_id()
             chat_targets = self._default_chat_targets()
+            # Determine topics based on notification preferences
+            motion_pref = (self.notifications.output_for_motion or "text").strip().lower()
+            detection_pref = (self.notifications.output_for_detection or "gif").strip().lower()
+
+            # Snapshots come from motion events, so only enable if motion wants them
+            wants_motion_snapshot = motion_pref in ("text", "snap")
+            wants_motion_text = motion_pref == "text"
+            wants_detection_text = detection_pref == "text"
+            wants_motion_gif = motion_pref == "gif"
+            wants_motion_video = motion_pref == "video"
+            wants_detection_gif = detection_pref == "gif"
+            wants_detection_video = detection_pref == "video"
+
+            snapshot_topic = self.rate_limit.output_topic if wants_motion_snapshot else None
+            gif_topic = "event.gif.ready" if (wants_motion_gif or wants_detection_gif) else None
+            clip_topic = (
+                self.clip.output_topic
+                if (self.clip.enabled and (wants_motion_video or wants_detection_video))
+                else None
+            )
+            snapshot_delivery = "text" if (wants_motion_text or wants_detection_text) else "photo"
+
             return ModuleConfig(
                 options={
                     "token": self.telegram.token,
                     "chat_id": chat_id,
                     "chat_targets": chat_targets,
-                    "topic": self.rate_limit.output_topic,
+                    "topic": snapshot_topic,
+                    "gif_topic": gif_topic,
+                    "clip_topic": clip_topic,
+                    "snapshot_delivery": snapshot_delivery,
                     "read_timeout": self.advanced.telegram_read_timeout,
                     "write_timeout": self.advanced.telegram_write_timeout,
                     "send_typing_action": self.telegram_behavior.send_typing_action,
@@ -1183,13 +1232,16 @@ class ConfigSnapshot(BaseModel):
             motion_pref = (self.notifications.output_for_motion or "text").strip().lower()
             detection_pref = (self.notifications.output_for_detection or "gif").strip().lower()
 
+            # Snapshots come from motion events, so only enable if motion wants them
             wants_motion_snapshot = motion_pref in ("text", "snap")
             wants_motion_text = motion_pref == "text"
+            wants_detection_text = detection_pref == "text"
             wants_motion_gif = motion_pref == "gif"
             wants_motion_video = motion_pref == "video"
             wants_detection_gif = detection_pref == "gif"
             wants_detection_video = detection_pref == "video"
 
+            # Always override topics based on preferences (don't check if already set)
             snapshot_topic_default = self.rate_limit.output_topic if wants_motion_snapshot else None
             gif_topic_default = (
                 "event.gif.ready" if (wants_motion_gif or wants_detection_gif) else None
@@ -1200,14 +1252,16 @@ class ConfigSnapshot(BaseModel):
                 else None
             )
 
-            if "topic" not in options:
-                options["topic"] = snapshot_topic_default
-            if "gif_topic" not in options:
-                options["gif_topic"] = gif_topic_default
-            if "clip_topic" not in options:
-                options["clip_topic"] = clip_topic_default
+            options["topic"] = snapshot_topic_default
+            options["gif_topic"] = gif_topic_default
+            options["clip_topic"] = clip_topic_default
+
+            # Set delivery mode based on preferences
             if "snapshot_delivery" not in options:
-                default_delivery = "text" if wants_motion_text else "photo"
+                # Use text delivery if either motion or detection wants text
+                default_delivery = (
+                    "text" if (wants_motion_text or wants_detection_text) else "photo"
+                )
                 options["snapshot_delivery"] = default_delivery
             options.setdefault("read_timeout", self.advanced.telegram_read_timeout)
             options.setdefault("write_timeout", self.advanced.telegram_write_timeout)
@@ -1374,8 +1428,11 @@ class ConfigService:
             return merged
 
         notifications_section = _section(detection_section, "notifications")
+        # Clip settings can come from media_artifacts (legacy) or notifications.video (preferred)
         media_section = _section(detection_section, "media_artifacts")
+        video_section = _section(notifications_section, "video")
         clip_data = _merge(media_section, _section(raw, "media_artifacts"))
+        clip_data = _merge(clip_data, video_section)  # notifications.video takes precedence
         clip_data = _merge(clip_data, _section(raw, "clip"))
 
         data = {
