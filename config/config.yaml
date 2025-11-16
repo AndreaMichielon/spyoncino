@@ -74,6 +74,12 @@ detection:
     output_for_motion: "text"      # null/text/snap/gif/video – what to send on motion-only events
     output_for_detection: "gif"    # null/text/snap/gif/video – what to send on person/object events
 
+    # Anti-spam cooldown settings (applies to all notification types: snapshots, GIFs, clips)
+    cooldown_enabled: true         # Enable cooldown filtering to prevent duplicate notifications
+    cooldown_seconds: 30.0         # Minimum seconds between notifications per camera/type
+    bbox_iou_threshold: 0.6       # IoU threshold for bbox overlap detection (0-1, higher = stricter)
+    timeout_seconds: 5.0           # Reset cooldown after this many seconds of inactivity
+
     snap:
       max_dimension: 640           # Max width or height in pixels (aspect preserved)
 

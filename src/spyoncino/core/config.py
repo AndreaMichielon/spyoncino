@@ -280,6 +280,19 @@ class NotificationSettings(BaseModel):
     snap: SnapshotOutputSettings = Field(default_factory=SnapshotOutputSettings)
     gif: GifOutputSettings = Field(default_factory=GifOutputSettings)
     video: VideoNotificationSettings = Field(default_factory=VideoNotificationSettings)
+    # Anti-spam cooldown settings for notifications
+    cooldown_enabled: bool = Field(
+        default=True, description="Enable cooldown filtering for notifications"
+    )
+    cooldown_seconds: float = Field(
+        default=30.0, description="Minimum seconds between notifications per camera/type"
+    )
+    bbox_iou_threshold: float = Field(
+        default=0.6, description="IoU threshold for bbox overlap detection"
+    )
+    timeout_seconds: float = Field(
+        default=5.0, description="Reset cooldown after this many seconds of inactivity"
+    )
 
     def wants_motion_gif(self) -> bool:
         return (self.output_for_motion or "").lower() == "gif"
@@ -943,6 +956,10 @@ class ConfigSnapshot(BaseModel):
                     "write_timeout": self.advanced.telegram_write_timeout,
                     "send_typing_action": self.telegram_behavior.send_typing_action,
                     "gif_notification_fps": self.notifications.gif.fps,
+                    "cooldown_enabled": self.notifications.cooldown_enabled,
+                    "cooldown_seconds": self.notifications.cooldown_seconds,
+                    "bbox_iou_threshold": self.notifications.bbox_iou_threshold,
+                    "timeout_seconds": self.notifications.timeout_seconds,
                 }
             )
 
@@ -1196,6 +1213,10 @@ class ConfigSnapshot(BaseModel):
             options.setdefault("write_timeout", self.advanced.telegram_write_timeout)
             options.setdefault("send_typing_action", self.telegram_behavior.send_typing_action)
             options.setdefault("gif_notification_fps", self.notifications.gif.fps)
+            options.setdefault("cooldown_enabled", self.notifications.cooldown_enabled)
+            options.setdefault("cooldown_seconds", self.notifications.cooldown_seconds)
+            options.setdefault("bbox_iou_threshold", self.notifications.bbox_iou_threshold)
+            options.setdefault("timeout_seconds", self.notifications.timeout_seconds)
         elif module_name == "modules.output.rate_limiter":
             options.setdefault("input_topic", self.rate_limit.input_topic)
             options.setdefault("output_topic", self.rate_limit.output_topic)

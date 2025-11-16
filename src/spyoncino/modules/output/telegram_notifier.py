@@ -12,6 +12,8 @@ import inspect
 import logging
 import os
 import tempfile
+import time
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Protocol
@@ -157,7 +159,9 @@ class TelegramNotifier(BaseModule):
 
     name = "modules.output.telegram_notifier"
 
-    def __init__(self, *, sender: TelegramSender | None = None) -> None:
+    def __init__(
+        self, *, sender: TelegramSender | None = None, clock: Callable[[], float] | None = None
+    ) -> None:
         super().__init__()
         self._sender = sender
         self._subscriptions: list[Subscription] = []
@@ -188,6 +192,19 @@ class TelegramNotifier(BaseModule):
             "gif": "🚨 Person detected on {camera_id}",
             "clip": "🎥 Clip recorded on {camera_id}",
         }
+        # Anti-spam cooldown tracking (per camera, per notification type)
+        self._cooldown_seconds = 30.0
+        # bbox/timeout are kept for compatibility but only cooldown_seconds is used
+        self._bbox_iou_threshold = 0.6
+        self._timeout_seconds = 5.0
+        self._cooldown_enabled = True
+        self._clock = clock or time.monotonic
+        # Track last notification: (camera_id, kind) -> (timestamp, bbox)
+        self._last_notifications: dict[
+            tuple[str, str], tuple[float, tuple[float, float, float, float] | None]
+        ] = {}
+        # Lock to ensure atomic check-and-update for cooldown (async lock for async context)
+        self._cooldown_lock: asyncio.Lock | None = None
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -238,8 +255,17 @@ class TelegramNotifier(BaseModule):
         self._gif_notification_fps = int(
             options.get("gif_notification_fps", self._gif_notification_fps)
         )
+        # Anti-spam configuration
+        self._cooldown_enabled = bool(options.get("cooldown_enabled", self._cooldown_enabled))
+        self._cooldown_seconds = float(options.get("cooldown_seconds", self._cooldown_seconds))
+        self._bbox_iou_threshold = float(
+            options.get("bbox_iou_threshold", self._bbox_iou_threshold)
+        )
+        self._timeout_seconds = float(options.get("timeout_seconds", self._timeout_seconds))
 
     async def start(self) -> None:
+        if self._cooldown_lock is None:
+            self._cooldown_lock = asyncio.Lock()
         if self._sender is None and self._token:
             self._sender = BotTelegramSender(
                 self._token,
@@ -273,6 +299,37 @@ class TelegramNotifier(BaseModule):
         if mode in {"none", "disabled"}:
             logger.debug("Skipping %s notification because mode=%s", kind, mode)
             return
+
+        # Extract camera_id and check cooldown before processing
+        camera_id = self._extract_camera_id(payload)
+        if camera_id and self._cooldown_enabled:
+            bbox = self._extract_bbox_from_artifact(payload)
+            # Capture current time once for this notification
+            current_time = self._clock()
+            # Use async lock to ensure atomic check-and-update
+            if self._cooldown_lock:
+                async with self._cooldown_lock:
+                    if self._should_suppress_notification(camera_id, kind, bbox, current_time):
+                        logger.debug(
+                            "Suppressing %s notification for camera %s due to cooldown/overlap",
+                            kind,
+                            camera_id,
+                        )
+                        return
+                    # Update last notification timestamp IMMEDIATELY after check
+                    # This ensures subsequent notifications see the updated timestamp
+                    self._update_last_notification(camera_id, kind, bbox, current_time)
+            else:
+                # Fallback if lock not initialized (shouldn't happen in normal operation)
+                if self._should_suppress_notification(camera_id, kind, bbox, current_time):
+                    logger.debug(
+                        "Suppressing %s notification for camera %s due to cooldown/overlap",
+                        kind,
+                        camera_id,
+                    )
+                    return
+                self._update_last_notification(camera_id, kind, bbox, current_time)
+
         if kind == "clip":
             if isinstance(payload, MediaArtifact):
                 await self._deliver_clip(payload)
@@ -555,6 +612,99 @@ class TelegramNotifier(BaseModule):
         if specific:
             return specific
         return self._chat_targets.get("snapshot", [])
+
+    def _extract_camera_id(self, payload: Any) -> str | None:
+        """Extract camera_id from artifact payload."""
+        if hasattr(payload, "camera_id"):
+            return payload.camera_id
+        if isinstance(payload, dict):
+            return payload.get("camera_id")
+        return None
+
+    def _extract_bbox_from_artifact(self, payload: Any) -> tuple[float, float, float, float] | None:
+        """Extract bounding box from artifact metadata if available."""
+        metadata = None
+        if hasattr(payload, "metadata"):
+            metadata = payload.metadata
+        elif isinstance(payload, dict):
+            metadata = payload.get("metadata")
+
+        if not metadata or not isinstance(metadata, dict):
+            return None
+
+        # Try to get bbox from nested detection metadata
+        detection = metadata.get("detection") or {}
+        if isinstance(detection, dict):
+            attributes = detection.get("attributes") or {}
+            bbox = attributes.get("bbox")
+            if bbox:
+                try:
+                    x1, y1, x2, y2 = (float(v) for v in bbox)
+                    return (x1, y1, x2, y2)
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    def _should_suppress_notification(
+        self,
+        camera_id: str,
+        kind: str,
+        bbox: tuple[float, float, float, float] | None,
+        current_time: float,
+    ) -> bool:
+        """
+        Return True when a notification should be suppressed due to cooldown.
+
+        NOTE:
+        - We intentionally use a simple time-based cooldown per (camera_id, kind).
+        - More advanced logic (timeout, bbox overlap) is handled upstream in the
+          detection pipeline; the notifier just enforces a final rate limit.
+        """
+        key = (camera_id, kind)
+        last = self._last_notifications.get(key)
+        if not last:
+            return False
+
+        last_time, _last_bbox = last
+        age = current_time - last_time
+
+        # Suppress if we are still inside the cooldown window
+        return age < self._cooldown_seconds
+
+    def _update_last_notification(
+        self,
+        camera_id: str,
+        kind: str,
+        bbox: tuple[float, float, float, float] | None,
+        current_time: float,
+    ) -> None:
+        """Update the last notification timestamp and bbox for the given camera/kind."""
+        key = (camera_id, kind)
+        self._last_notifications[key] = (current_time, bbox)
+
+    def _iou(
+        self,
+        bbox_a: tuple[float, float, float, float],
+        bbox_b: tuple[float, float, float, float],
+    ) -> float:
+        """Calculate Intersection over Union (IoU) for two bounding boxes."""
+        x1 = max(bbox_a[0], bbox_b[0])
+        y1 = max(bbox_a[1], bbox_b[1])
+        x2 = min(bbox_a[2], bbox_b[2])
+        y2 = min(bbox_a[3], bbox_b[3])
+
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+
+        intersection = (x2 - x1) * (y2 - y1)
+        area_a = (bbox_a[2] - bbox_a[0]) * (bbox_a[3] - bbox_a[1])
+        area_b = (bbox_b[2] - bbox_b[0]) * (bbox_b[3] - bbox_b[1])
+        union = area_a + area_b - intersection
+
+        if union <= 0:
+            return 0.0
+
+        return intersection / union
 
 
 __all__ = [
