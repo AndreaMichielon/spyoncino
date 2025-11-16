@@ -30,7 +30,7 @@ detection:
   model_path: "config/yolov8n.pt"  # Path to Ultralytics model weights
   class_filter: []               # Optional list of class names to keep (empty = all)
   motion_threshold: 5            # Pixel delta threshold for basic motion detector
-  label_cooldown_seconds: 30.0   # Prevent duplicate alerts for the same label
+  label_cooldown_seconds: 10.0   # Prevent duplicate alerts for the same label
   bbox_overlap_threshold: 0.6    # IOU merge threshold for dedupe logic
   alert_labels:
     - "person"                   # YOLO classes that should trigger alert routing
@@ -48,7 +48,7 @@ detection:
   dedupe:
     input_topic: "process.motion.detected"  # Raw detections to deduplicate
     output_topic: "process.motion.unique"   # Topic after dedupe
-    window_seconds: 60.0            # Detections inside this window collapse together
+    window_seconds: 30.0            # Detections inside this window collapse together
     key_fields:
       - "camera_id"                # Fields used to build the dedupe signature
       - "detector_id"

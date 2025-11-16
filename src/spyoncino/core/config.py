@@ -764,6 +764,8 @@ class ConfigSnapshot(BaseModel):
                 options={
                     "input_topics": self.camera_topics(),
                     "input_topic": self.primary_camera.topic,
+                    "interval_seconds": self.detection.interval,
+                    "motion_threshold": self.detection.motion_threshold,
                 }
             )
 

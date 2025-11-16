@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 from asyncio import QueueEmpty
@@ -56,6 +57,7 @@ class EventBus:
         self._subscribers: dict[str, list[Handler]] = defaultdict(list)
         self._dispatcher_task: asyncio.Task[None] | None = None
         self._telemetry_task: asyncio.Task[None] | None = None
+        self._handler_tasks: set[asyncio.Task[None]] = set()
         self._stopping = asyncio.Event()
         self._telemetry_topic = telemetry_topic
         self._telemetry_interval = telemetry_interval
@@ -137,6 +139,11 @@ class EventBus:
         await self._queue.put(("", _StopPayload()))
         await self._dispatcher_task
         self._dispatcher_task = None
+        # Wait for any in-flight handler tasks to complete
+        if self._handler_tasks:
+            pending = list(self._handler_tasks)
+            self._handler_tasks.clear()
+            await asyncio.gather(*pending, return_exceptions=True)
         logger.info("Event bus dispatcher stopped.")
         if self._telemetry_task:
             self._telemetry_task.cancel()
@@ -157,9 +164,24 @@ class EventBus:
                 if not handlers:
                     continue
 
-                await asyncio.gather(
-                    *(handler(topic, payload) for handler in handlers), return_exceptions=False
-                )
+                # Schedule handlers asynchronously to avoid deadlocks when handlers publish
+                # back into the bus (queue backpressure while dispatcher awaits handlers).
+                for handler in handlers:
+                    task = asyncio.create_task(self._call_handler(handler, topic, payload))
+                    self._handler_tasks.add(task)
+
+                    def _on_done(t: asyncio.Task[None], _topic: str = topic) -> None:
+                        # Remove from tracking set
+                        self._handler_tasks.discard(t)
+                        if t.cancelled():
+                            return
+                        exc = t.exception()
+                        if exc is not None:
+                            logger.exception(
+                                "Subscriber handler failed on topic %s", _topic, exc_info=exc
+                            )
+
+                    task.add_done_callback(_on_done)
                 self._processed_total += 1
                 self._last_dispatch_ts = time.monotonic()
             finally:
@@ -184,6 +206,15 @@ class EventBus:
                 await self.publish(self._telemetry_topic, status)
         except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
             return
+
+    async def _call_handler(self, handler: Handler, topic: str, payload: BasePayload) -> None:
+        """
+        Invoke a handler that may be sync or async. If it returns an awaitable, await it;
+        otherwise execute synchronously.
+        """
+        result = handler(topic, payload)
+        if inspect.isawaitable(result):
+            await result  # type: ignore[func-returns-value]
 
     def _build_status_payload(self) -> BusStatus:
         depth = self._queue.qsize()
