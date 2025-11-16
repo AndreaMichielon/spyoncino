@@ -15,9 +15,9 @@ cameras:
   - camera_id: "default"        # Logical ID used in bus topics (camera.<id>.frame)
     usb_port: 0                 # USB index or file path; set `rtsp_url` for network cams
     rtsp_url: null              # Example: rtsp://user:pass@host/stream (null disables RTSP)
-    width: 1280                 # Set to null to keep native width
-    height: 720                 # Set to null to keep native height
-    fps: 15                     # Frames per second; null lets the driver decide
+    width: 960                 # Set to null to keep native width
+    height: null                 # Set to null to keep native height
+    fps: null                     # Frames per second; null lets the driver decide
     interval_seconds: 1.0       # Capture interval for simulator/throttled inputs
 
 # =============================================================================
@@ -25,7 +25,7 @@ cameras:
 # =============================================================================
 detection:
   interval: 2.0                  # Seconds between motion-processing batches
-  record_frames: 50              # Frames cached per detection for GIF/clip builders
+  record_frames: 100              # Frames cached per detection for GIF/clip builders
   confidence: 0.25               # YOLO confidence threshold (0-1)
   model_path: "config/yolov8n.pt"  # Path to Ultralytics model weights
   class_filter: []               # Optional list of class names to keep (empty = all)
@@ -48,7 +48,7 @@ detection:
   dedupe:
     input_topic: "process.motion.detected"  # Raw detections to deduplicate
     output_topic: "process.motion.unique"   # Topic after dedupe
-    window_seconds: 2.0            # Detections inside this window collapse together
+    window_seconds: 60.0            # Detections inside this window collapse together
     key_fields:
       - "camera_id"                # Fields used to build the dedupe signature
       - "detector_id"
@@ -59,9 +59,7 @@ detection:
     input_topic: "process.motion.unique"   # Source detections to zone-filter
     output_topic: "process.motion.zoned"   # Topic for detections that pass zone rules
     unmatched_topic: null          # Optional topic for detections outside zones
-    drop_outside: false            # True = drop detections not matching include zones
-    frame_width: 1280              # Reference width for zone coordinate normalization
-    frame_height: 720              # Reference height for zone coordinate normalization
+    # Note: Zone bounds are normalized (0.0-1.0). Frame size is auto-detected from the stream.
     zones:                         # Top-level list; set to null to disable zoning completely
       - camera_id: "default"       # Camera the nested zones apply to
         zones: null                # Null = no zones for this camera (acts as disabled zoning for this camera)
@@ -70,26 +68,25 @@ detection:
     #     door:                    # Zone identifier (unique per camera)
     #       bounds: [0.0, 0.0, 0.6, 1.0]  # Normalized [x1,y1,x2,y2] covering 0-1 space
     #       labels: ["person"]     # Optional list restricting which labels trigger the zone
-    #       action: "include"      # include|exclude (default include); exclude blocks events
+    #       action: "include"      # include|exclude; action decides whether detection is kept
 
   notifications:
     output_for_motion: "text"      # null/text/snap/gif/video – what to send on motion-only events
     output_for_detection: "gif"    # null/text/snap/gif/video – what to send on person/object events
 
     snap:
-      width: 1280                  # Override snapshot width (null reuses camera width)
-      height: 720                  # Override snapshot height (null reuses camera height)
+      max_dimension: 640           # Max width or height in pixels (aspect preserved)
 
     gif:
-      duration_seconds: 3          # Seconds captured per GIF
-      fps: 15                      # GIF playback FPS (also used when transcoding to MP4 for Telegram)
-      max_frames: 20               # Max frames per GIF (smart selection if more frames available)
-      max_file_size_mb: 50.0       # Upper bound for GIF payload size
       max_dimension: 640           # Maximum width or height in pixels (reduces file size significantly)
+      fps: 10                      # GIF playback FPS (also used when transcoding to MP4 for Telegram)
+      duration_seconds: 3.0          # Seconds captured per GIF
+      max_file_size_mb: 50.0       # Upper bound for GIF payload size
 
     video:
-      duration_seconds: 5.0        # Seconds captured per clip when sent via notifier
+      max_dimension: 640           # Max width or height in pixels (aspect preserved)
       fps: 12                      # Clip FPS when sharing via notifier
+      duration_seconds: 5.0        # Seconds captured per clip when sent via notifier
       max_file_size_mb: 50.0       # Upper bound for clip payload size
 
   media_artifacts:

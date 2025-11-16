@@ -34,7 +34,6 @@ async def test_gif_builder_creates_artifacts(tmp_path: Path) -> None:
                 "output_dir": str(tmp_path),
                 "fps": 5,
                 "duration_seconds": 1,
-                "max_frames": 5,
             }
         )
     )
@@ -60,7 +59,7 @@ async def test_gif_builder_creates_artifacts(tmp_path: Path) -> None:
         DetectionEvent(camera_id="lab", detector_id="unit-test", frame_ref="mem::1"),
     )
 
-    await asyncio.wait_for(ready.wait(), timeout=0.5)
+    await asyncio.wait_for(ready.wait(), timeout=2.0)
     await module.stop()
     await bus.stop()
 

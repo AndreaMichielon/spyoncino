@@ -10,10 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import io
 import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
+
+import cv2
+import imageio.v3 as iio
+import numpy as np
 
 from ...core.bus import Subscription
 from ...core.contracts import (
@@ -45,6 +50,7 @@ class SnapshotWriter(BaseModule):
         self._extension = ".png"
         self._max_snapshots: int | None = None
         self._write_lock = asyncio.Lock()
+        self._max_dimension: int | None = None
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -59,6 +65,11 @@ class SnapshotWriter(BaseModule):
         self._extension = extension if extension.startswith(".") else f".{extension}"
         max_snapshots = options.get("max_snapshots")
         self._max_snapshots = int(max_snapshots) if max_snapshots is not None else None
+        if "max_dimension" in options and options.get("max_dimension") is not None:
+            try:
+                self._max_dimension = int(options.get("max_dimension"))
+            except (TypeError, ValueError):
+                self._max_dimension = None
 
     async def start(self) -> None:
         self._output_dir.mkdir(parents=True, exist_ok=True)
@@ -132,8 +143,45 @@ class SnapshotWriter(BaseModule):
         safe_camera = _CAMERA_SAFE.sub("_", frame.camera_id)
         filename = f"{safe_camera}_{timestamp}{self._extension}"
         path = self._output_dir / filename
-        await asyncio.to_thread(path.write_bytes, frame.image_bytes or b"")
+        # Decode, optionally resize with aspect ratio, then encode and write
+        image = await asyncio.to_thread(self._decode_frame, frame)
+        if self._max_dimension and self._max_dimension > 0:
+            image = await asyncio.to_thread(self._resize_image, image, self._max_dimension)
+        await asyncio.to_thread(self._encode_and_write, image, path, self._extension)
         return path
+
+    def _decode_frame(self, frame: Frame) -> np.ndarray:
+        extension = ".png"
+        if frame.content_type:
+            if "jpeg" in frame.content_type or "jpg" in frame.content_type:
+                extension = ".jpg"
+            elif "gif" in frame.content_type:
+                extension = ".gif"
+        with io.BytesIO(frame.image_bytes or b"") as buffer:
+            image = iio.imread(buffer, extension=extension)
+        if image.ndim == 2:
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+        elif image.shape[-1] == 4:
+            image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
+        return image
+
+    def _resize_image(self, image: np.ndarray, max_dimension: int) -> np.ndarray:
+        height, width = image.shape[:2]
+        if max(height, width) <= max_dimension:
+            return image
+        scale = max_dimension / max(height, width)
+        new_width = int(width * scale)
+        new_height = int(height * scale)
+        return cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+    def _encode_and_write(self, image: np.ndarray, path: Path, extension: str) -> None:
+        ext = extension.lower()
+        if ext in (".jpg", ".jpeg"):
+            iio.imwrite(path, image, extension=".jpg", quality=90)
+        elif ext == ".png":
+            iio.imwrite(path, image, extension=".png")
+        else:
+            iio.imwrite(path, image)
 
     async def _prune_output_dir(self) -> None:
         if not self._max_snapshots or self._max_snapshots <= 0:

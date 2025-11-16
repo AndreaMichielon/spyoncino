@@ -33,8 +33,8 @@ class GifBuilder(BaseModule):
         self._detection_topic = "process.yolo.detected"
         self._output_topic = "event.gif.ready"
         self._output_dir = Path("recordings") / "gifs"
-        self._frames: dict[str, deque[Frame]] = defaultdict(lambda: deque(maxlen=90))
-        self._max_frames = 90
+        # Buffer size will be derived from fps * duration_seconds
+        self._frames: dict[str, deque[Frame]] = defaultdict(lambda: deque(maxlen=30))
         self._fps = 10
         self._duration_seconds = 3
         self._max_artifacts: int | None = 50
@@ -52,7 +52,6 @@ class GifBuilder(BaseModule):
         self._detection_topic = options.get("detection_topic", self._detection_topic)
         self._output_topic = options.get("output_topic", self._output_topic)
         self._output_dir = Path(options.get("output_dir", self._output_dir))
-        self._max_frames = int(options.get("max_frames", self._max_frames))
         self._fps = int(options.get("fps", self._fps))
         self._duration_seconds = float(options.get("duration_seconds", self._duration_seconds))
         self._max_dimension = int(options.get("max_dimension", self._max_dimension))
@@ -60,9 +59,13 @@ class GifBuilder(BaseModule):
         self._max_artifacts = int(max_artifacts) if max_artifacts is not None else None
         if "apply_overlays" in options:
             self._apply_overlays = bool(options.get("apply_overlays"))
-        # resize deque maxlen for all existing cameras
+        # resize deque maxlen for all existing cameras based on fps * duration
         for camera_id, buffer in self._frames.items():
-            self._frames[camera_id] = deque(buffer, maxlen=self._max_frames)
+            target_len = max(1, int(self._fps * self._duration_seconds))
+            self._frames[camera_id] = deque(buffer, maxlen=target_len)
+        # ensure new camera buffers also use the derived length
+        target_len = max(1, int(self._fps * self._duration_seconds))
+        self._frames.default_factory = lambda: deque(maxlen=target_len)
 
     async def start(self) -> None:
         self._output_dir.mkdir(parents=True, exist_ok=True)
@@ -97,9 +100,7 @@ class GifBuilder(BaseModule):
         if not frames:
             logger.debug("No frames buffered for camera %s; skipping GIF.", payload.camera_id)
             return
-        target_frames = min(
-            len(frames), max(1, int(self._fps * self._duration_seconds)), self._max_frames
-        )
+        target_frames = min(len(frames), max(1, int(self._fps * self._duration_seconds)))
         all_selected = frames[-target_frames:] if len(frames) > target_frames else frames
         timestamp = all_selected[-1].timestamp_utc
         processed_frames = await asyncio.to_thread(self._prepare_frames, all_selected, payload)
@@ -159,9 +160,8 @@ class GifBuilder(BaseModule):
         if not prepared:
             raise RuntimeError("Failed to decode frames for GIF generation.")
 
-        # Apply smart frame selection and resize
-        selected_frames = self._select_key_frames(prepared)
-        resized_frames = [self._resize_for_gif(frame) for frame in selected_frames]
+        # Resize frames (selection already handled by target_frames upstream)
+        resized_frames = [self._resize_for_gif(frame) for frame in prepared]
         return resized_frames
 
     def _decode_frame(self, frame: Frame) -> np.ndarray:
@@ -318,46 +318,7 @@ class GifBuilder(BaseModule):
         except (TypeError, ValueError):
             return None
 
-    def _select_key_frames(self, frames: list[np.ndarray]) -> list[np.ndarray]:
-        """
-        Select key frames using weighted temporal distribution.
-
-        Emphasizes beginning (trigger moment) and distributes remaining
-        frames evenly for smooth motion representation.
-        """
-        if len(frames) <= self._max_frames:
-            return frames
-
-        n_frames = len(frames)
-        selected_indices = []
-
-        # Take more frames from beginning (40% of budget for first third)
-        beginning_budget = int(self._max_frames * 0.4)
-        beginning_end = n_frames // 3
-        beginning_step = max(1, beginning_end / max(1, beginning_budget))
-
-        for i in range(beginning_budget):
-            idx = min(int(i * beginning_step), beginning_end - 1)
-            selected_indices.append(idx)
-
-        # Distribute remaining frames evenly across the rest
-        remaining_budget = self._max_frames - len(selected_indices)
-        remaining_start = beginning_end
-        remaining_span = n_frames - remaining_start
-        remaining_step = remaining_span / max(1, remaining_budget)
-
-        for i in range(remaining_budget):
-            idx = remaining_start + int(i * remaining_step)
-            selected_indices.append(min(idx, n_frames - 1))
-
-        # Remove duplicates and sort
-        selected_indices = sorted(set(selected_indices))
-
-        # Ensure we have the last frame for closure
-        if selected_indices and selected_indices[-1] != n_frames - 1:
-            selected_indices[-1] = n_frames - 1
-
-        return [frames[i] for i in selected_indices]
+    # Note: key-frame selection removed; fps x duration defines frame count upstream.
 
     def _resize_for_gif(self, frame: np.ndarray) -> np.ndarray:
         """Resize frame with max side from config, preserving aspect ratio and even dimensions."""

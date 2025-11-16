@@ -24,8 +24,6 @@ class ZoneRule:
     bounds: tuple[float, float, float, float]
     labels: frozenset[str]
     action: str
-    frame_width: int
-    frame_height: int
 
     def contains(self, x: float, y: float) -> bool:
         x1, y1, x2, y2 = self.bounds
@@ -46,9 +44,6 @@ class ZoningFilter(BaseModule):
         self._input_topic = "process.motion.unique"
         self._output_topic = "process.motion.zoned"
         self._unmatched_topic: str | None = None
-        self._drop_outside = False
-        self._frame_width = 640
-        self._frame_height = 480
         self._zones: list[ZoneRule] = []
         self._subscriptions: list[Subscription] = []
         self._camera_dimensions: dict[str, tuple[int, int]] = {}
@@ -60,9 +55,6 @@ class ZoningFilter(BaseModule):
         self._input_topic = options.get("input_topic", self._input_topic)
         self._output_topic = options.get("output_topic", self._output_topic)
         self._unmatched_topic = options.get("unmatched_topic", self._unmatched_topic)
-        self._drop_outside = bool(options.get("drop_outside", self._drop_outside))
-        self._frame_width = int(options.get("frame_width", self._frame_width))
-        self._frame_height = int(options.get("frame_height", self._frame_height))
         self._camera_dimensions = self._parse_camera_dimensions(options.get("camera_dimensions"))
         raw_zones: Sequence[dict[str, object]] = options.get("zones", []) or []
         self._zones = [self._compile_zone(entry) for entry in raw_zones]
@@ -101,13 +93,6 @@ class ZoningFilter(BaseModule):
         if matches:
             annotated = self._annotate(payload, matches)
             await self.bus.publish(self._output_topic, annotated)
-            return
-        if self._drop_outside:
-            logger.debug(
-                "Dropping detection outside include zones for camera %s", payload.camera_id
-            )
-            if self._unmatched_topic:
-                await self.bus.publish(self._unmatched_topic, payload)
             return
         await self.bus.publish(self._output_topic, payload)
 
@@ -161,8 +146,6 @@ class ZoningFilter(BaseModule):
         name = entry.get("name")
         labels = entry.get("labels") or entry.get("classes") or []
         action = str(entry.get("action") or "include")
-        frame_width = int(entry.get("frame_width") or self._frame_width)
-        frame_height = int(entry.get("frame_height") or self._frame_height)
         return ZoneRule(
             camera_id=camera_id,
             zone_id=zone_id,
@@ -175,8 +158,6 @@ class ZoningFilter(BaseModule):
             ),
             labels=frozenset(str(label) for label in labels) if labels else frozenset(),
             action=action,
-            frame_width=frame_width,
-            frame_height=frame_height,
         )
 
     def _parse_camera_dimensions(self, raw: object) -> dict[str, tuple[int, int]]:
@@ -210,9 +191,6 @@ class ZoningFilter(BaseModule):
             fallback = camera_dims[index]
             if fallback > 0:
                 return float(fallback)
-        fallback = self._frame_width if axis == "width" else self._frame_height
-        if fallback > 0:
-            return float(fallback)
         return None
 
 

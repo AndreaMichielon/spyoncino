@@ -241,8 +241,7 @@ class SnapshotOutputSettings(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    width: int | None = Field(default=None)
-    height: int | None = Field(default=None)
+    max_dimension: int | None = Field(default=None, description="Max width/height in pixels")
 
 
 class GifOutputSettings(BaseModel):
@@ -252,7 +251,6 @@ class GifOutputSettings(BaseModel):
 
     duration_seconds: float = Field(default=3.0)
     fps: int = Field(default=15)
-    max_frames: int = Field(default=20)
     max_file_size_mb: float = Field(default=50.0)
     max_dimension: int = Field(
         default=640, description="Maximum width or height in pixels for GIF frames"
@@ -267,6 +265,7 @@ class VideoNotificationSettings(BaseModel):
     duration_seconds: float = Field(default=5.0)
     fps: int = Field(default=12)
     max_file_size_mb: float = Field(default=50.0)
+    max_dimension: int | None = Field(default=None, description="Max width/height in pixels")
 
 
 class NotificationSettings(BaseModel):
@@ -315,8 +314,6 @@ class ZoneDefinition(BaseModel):
     )
     labels: list[str] = Field(default_factory=list)
     action: Literal["include", "exclude"] = Field(default="include")
-    frame_width: int | None = None
-    frame_height: int | None = None
 
     @field_validator("bounds")
     @classmethod
@@ -344,11 +341,6 @@ class ZoningSettings(BaseModel):
     unmatched_topic: str | None = Field(
         default=None, description="Optional topic for detections that miss all zones."
     )
-    drop_outside: bool = Field(
-        default=False, description="When true, detections outside include zones are dropped."
-    )
-    frame_width: int = Field(default=640)
-    frame_height: int = Field(default=480)
     zones: list[ZoneDefinition] = Field(default_factory=list)
 
     @model_validator(mode="before")
@@ -808,6 +800,7 @@ class ConfigSnapshot(BaseModel):
                     "frame_topics": self.camera_topics(),
                     "detection_topic": self.dedupe.output_topic,
                     "output_dir": str(self.storage.snapshot_dir),
+                    "max_dimension": self.notifications.snap.max_dimension,
                 }
             )
 
@@ -839,7 +832,6 @@ class ConfigSnapshot(BaseModel):
                     "output_dir": str(self.storage.gif_dir),
                     "fps": gif_settings.fps,
                     "duration_seconds": gif_settings.duration_seconds,
-                    "max_frames": gif_settings.max_frames,
                     "max_dimension": gif_settings.max_dimension,
                 },
             )
@@ -855,6 +847,7 @@ class ConfigSnapshot(BaseModel):
                     "fps": self.clip.fps,
                     "duration_seconds": self.clip.duration_seconds,
                     "max_artifacts": self.clip.max_artifacts,
+                    "max_dimension": self.notifications.video.max_dimension,
                 }
             )
 
@@ -872,9 +865,6 @@ class ConfigSnapshot(BaseModel):
                     "input_topic": self.zoning.input_topic,
                     "output_topic": self.zoning.output_topic,
                     "unmatched_topic": self.zoning.unmatched_topic,
-                    "drop_outside": self.zoning.drop_outside,
-                    "frame_width": self.zoning.frame_width,
-                    "frame_height": self.zoning.frame_height,
                     "camera_dimensions": camera_dimensions,
                     "zones": [zone.model_dump() for zone in self.zoning.zones],
                 }

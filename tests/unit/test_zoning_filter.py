@@ -28,8 +28,6 @@ async def test_zoning_filter_announces_matches() -> None:
                         "labels": ["person"],
                     }
                 ],
-                "frame_width": 100,
-                "frame_height": 100,
             }
         )
     )

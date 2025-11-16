@@ -11,6 +11,7 @@ import re
 from collections import defaultdict, deque
 from pathlib import Path
 
+import cv2
 import imageio.v3 as iio
 import numpy as np
 
@@ -39,6 +40,7 @@ class ClipBuilder(BaseModule):
         self._frames: dict[str, deque[Frame]] = defaultdict(lambda: deque(maxlen=120))
         self._subscriptions: list[Subscription] = []
         self._write_lock = asyncio.Lock()
+        self._max_dimension: int | None = None
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -54,6 +56,11 @@ class ClipBuilder(BaseModule):
         self._duration_seconds = float(options.get("duration_seconds", self._duration_seconds))
         max_artifacts = options.get("max_artifacts")
         self._max_artifacts = int(max_artifacts) if max_artifacts is not None else None
+        if "max_dimension" in options and options.get("max_dimension") is not None:
+            try:
+                self._max_dimension = int(options.get("max_dimension"))
+            except (TypeError, ValueError):
+                self._max_dimension = None
         self._update_buffers()
 
     async def start(self) -> None:
@@ -125,7 +132,13 @@ class ClipBuilder(BaseModule):
                 extension = ".png"
                 if frame.content_type and "jpeg" in frame.content_type:
                     extension = ".jpg"
-                images.append(iio.imread(buffer, extension=extension))
+                img = iio.imread(buffer, extension=extension)
+                if self._max_dimension and max(img.shape[:2]) > self._max_dimension:
+                    scale = self._max_dimension / max(img.shape[0], img.shape[1])
+                    new_w = int(img.shape[1] * scale)
+                    new_h = int(img.shape[0] * scale)
+                    img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                images.append(img)
         if not images:
             raise RuntimeError("Failed to decode frames for clip generation.")
         await asyncio.to_thread(

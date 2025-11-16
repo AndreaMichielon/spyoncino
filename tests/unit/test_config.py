@@ -123,8 +123,8 @@ def test_unknown_module_raises_error(sample_config_service: ConfigService) -> No
 
 
 def test_apply_changes_updates_snapshot(sample_config_service: ConfigService) -> None:
-    snapshot = sample_config_service.apply_changes({"zoning": {"drop_outside": True}})
-    assert snapshot.zoning.drop_outside is True
+    snapshot = sample_config_service.apply_changes({"zoning": {"enabled": True}})
+    assert snapshot.zoning.enabled is True
 
 
 def test_camera_settings_allows_null_dimensions() -> None:
