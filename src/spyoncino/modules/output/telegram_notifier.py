@@ -183,10 +183,8 @@ class TelegramNotifier(BaseModule):
         self._transcode_large_gifs = False
         self._gif_notification_fps = 10
         self._caption_templates = {
-            "snapshot": (
-                "Motion detected on {camera_id} "
-                "(detector={detector_id}, confidence={confidence:.2f})"
-            ),
+            # Hardcoded legacy-style concise messages
+            "snapshot": "👀 Motion detected on {camera_id}",
             "gif": "🚨 Person detected on {camera_id}",
             "clip": "🎥 Clip recorded on {camera_id}",
         }
@@ -303,7 +301,7 @@ class TelegramNotifier(BaseModule):
         )
         if is_gif_artifact and mode not in {"animation", "video", "text"}:
             mode = "animation"
-        caption = self._render_caption(kind, artifact.metadata, artifact.camera_id)
+        caption = self._compose_caption(kind, artifact.metadata, artifact.camera_id, mode)
         prepared_path = file_path
         cleanup_path: Path | None = None
         try:
@@ -311,6 +309,8 @@ class TelegramNotifier(BaseModule):
                 prepared_path, mode, cleanup_path = await self._prepare_gif_delivery(
                     file_path, mode
                 )
+                # Re-compose caption if delivery mode changed during preparation
+                caption = self._compose_caption(kind, artifact.metadata, artifact.camera_id, mode)
             failures = 0
             for chat_id in recipients:
                 try:
@@ -339,7 +339,7 @@ class TelegramNotifier(BaseModule):
         if sender is None or not recipients:
             logger.debug("Skipping %s text notification because sender/chat is unavailable.", kind)
             return
-        caption = self._render_caption(kind, artifact.metadata, artifact.camera_id)
+        caption = self._compose_caption(kind, artifact.metadata, artifact.camera_id, "text")
         failures = 0
         for chat_id in recipients:
             try:
@@ -361,7 +361,7 @@ class TelegramNotifier(BaseModule):
         if not file_path.exists():
             logger.warning("Clip path %s does not exist; skipping.", file_path)
             return
-        caption = self._render_caption("clip", artifact.metadata, artifact.camera_id)
+        caption = self._compose_caption("clip", artifact.metadata, artifact.camera_id, "video")
         failures = 0
         for chat_id in recipients:
             try:
@@ -457,19 +457,73 @@ class TelegramNotifier(BaseModule):
         except OSError as exc:
             logger.debug("Failed to cleanup temporary media %s: %s", path, exc)
 
-    def _render_caption(self, kind: str, metadata: dict[str, Any], camera_id: str) -> str:
+    def _compose_caption(
+        self,
+        kind: str,
+        metadata: dict[str, Any],
+        camera_id: str,
+        delivery_mode: str,
+    ) -> str:
+        """Hardcode legacy-style text with emoji chosen by delivery type.
+        Event label is derived from the detection metadata, not attachment type.
+        """
+        label = self._event_label_from_metadata(metadata)
+        mode = (delivery_mode or "").lower()
+        emoji = {
+            "text": "📝",
+            "photo": "📸",
+            "animation": "🎞️",
+            "video": "🎥",
+        }.get(mode, "")
+        ts = self._extract_compact_timestamp(metadata)
+        prefix = f"{emoji} " if emoji else ""
+        return f"[{ts}] {prefix}{label} on {camera_id}"
+
+    def _event_label_from_metadata(self, metadata: dict[str, Any]) -> str:
+        """Infer Motion vs Detection from the upstream detection payload."""
         detection = metadata.get("detection") or {}
-        template = self._caption_templates.get(kind) or self._caption_templates["snapshot"]
-        template_vars = {
-            "camera_id": camera_id,
-            "detector_id": detection.get("detector_id", "unknown"),
-            "confidence": detection.get("confidence", 0.0),
-            "timestamp": detection.get("timestamp_utc", ""),
-        }
+        detector_id = str(detection.get("detector_id", "")).lower()
+        if detector_id == "motion":
+            return "Motion"
+        # Heuristics: presence of bbox/detections implies object detection
+        attributes = detection.get("attributes") or {}
+        if attributes.get("bbox"):
+            return "Detection"
+        nested = attributes.get("detections")
+        if isinstance(nested, list) and any(
+            isinstance(entry, dict) and entry.get("bbox") for entry in nested
+        ):
+            return "Detection"
+        # Fallback: if confidence indicates classifier-style, prefer Detection
         try:
-            return template.format(**template_vars)
-        except KeyError:
-            return f"Event detected on {camera_id}"
+            conf = float(detection.get("confidence", 0.0))
+            if conf > 0 and detector_id:
+                return "Detection"
+        except (TypeError, ValueError):
+            pass
+        return "Motion"
+
+    def _extract_compact_timestamp(self, metadata: dict[str, Any]) -> str:
+        """Return YYYY-MM-DD HH:MM.SS from detection.timestamp_utc (fallback to now UTC)."""
+        import datetime as dt
+
+        detection = metadata.get("detection") or {}
+        raw = detection.get("timestamp_utc")
+        dt_obj: dt.datetime | None = None
+        if isinstance(raw, str):
+            # Handle ISO strings, including trailing 'Z'
+            try:
+                norm = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+                dt_obj = dt.datetime.fromisoformat(norm)
+            except Exception:
+                dt_obj = None
+        elif isinstance(raw, dt.datetime):
+            dt_obj = raw
+        if dt_obj is None:
+            dt_obj = dt.datetime.now(tz=dt.UTC)
+        # Convert to naive or keep tz-aware but format consistently
+        ts = dt_obj.astimezone(dt.UTC).strftime("%d/%m/%y %H:%M.%S")
+        return ts
 
     def _normalize_delivery(self, value: Any, *, default: str) -> str:
         if value is None:

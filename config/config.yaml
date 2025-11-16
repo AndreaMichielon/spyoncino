@@ -208,6 +208,10 @@ outputs:
   modules:
     - module: modules.output.telegram_notifier   # Telegram notifier
       additive: true
+      options:
+        # Route motion snapshots through the rate limiter output
+        topic: "event.snapshot.allowed"
+        # Keep delivery modes and captions hardcoded in module (legacy style)
     - module: modules.output.email_notifier      # Email notifier (disabled by default)
       enabled: false
       additive: true

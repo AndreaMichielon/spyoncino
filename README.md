@@ -275,6 +275,32 @@ General system settings organized by category:
 
 > ℹ️ **Telegram fan-out:** The modular `telegram_notifier` automatically sends alerts to every chat listed in its `chat_targets`. When not provided, it builds this list from `telegram.chat_id`, `system.security.notification_chat_id`, the configured superuser, and every whitelisted user (private chats use the same numeric ID as the user). You can override or extend per media type with `gif_chat_targets` / `clip_chat_targets` inside `outputs.modules`.
 
+#### Notification Message Format
+
+- Captions are legacy-style and hardcoded (no template configuration required).
+- The leading timestamp appears in square brackets as `[dd/mm/'yy hh:mm.ss]` (UTC).
+- The event label derives from the detection type:
+  - Motion events → `Motion on <camera_id>`
+  - Object/person detections → `Detection on <camera_id>`
+- The emoji reflects the delivery mode:
+  - Text: `📝`
+  - Photo (snapshot): `📸`
+  - Animation (GIF): `🎞️`
+  - Video (MP4): `🎥`
+
+Examples:
+```
+[16/11/'25 21:45.07] 📝 Motion on default
+[16/11/'25 21:45.07] 📸 Motion on garage
+[16/11/'25 21:45.07] 🎞️ Detection on default
+[16/11/'25 21:45.07] 🎥 Detection on backyard
+```
+
+Rate limiting:
+- Motion snapshots are throttled by the `outputs.rate_limit` module.
+- Ensure the Telegram notifier listens to the throttled topic:
+  - `outputs.modules[].options.topic: "event.snapshot.allowed"`
+
 ### Telegram bot settings (inside `config/config.yaml`)
 Telegram bot and security settings now live alongside the rest of the system configuration:
 
