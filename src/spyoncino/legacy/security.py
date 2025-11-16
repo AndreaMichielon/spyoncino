@@ -58,6 +58,7 @@ class SecuritySystem:
         gif_worker_threads: int = 2,
         bg_detect_shadows: bool = True,
         ui_scale_base: int = 320,
+        apply_event_overlays: bool = False,
     ):
         """
         Initialize the security system.
@@ -110,6 +111,7 @@ class SecuritySystem:
         self.gif_worker_threads = gif_worker_threads
         self.bg_detect_shadows = bg_detect_shadows
         self.ui_scale_base = ui_scale_base
+        self._apply_event_overlays = bool(apply_event_overlays)
 
         # Logging
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -870,21 +872,15 @@ class SecuritySystem:
         cached_detections: list[dict] | None = None,
         frames_processed: int = 0,
     ) -> list[np.ndarray]:
-        """
-        Apply appropriate overlays to frames based on detection result.
+        """Apply overlays to frames if enabled."""
 
-        Args:
-            frames: Raw frames to process
-            has_person: Whether person was detected
-            cached_detections: Pre-computed YOLO results for early frames
-            frames_processed: Number of frames with cached detections
-
-        Returns:
-            List of frames with overlays applied
-        """
-        processed_frames = []
+        processed_frames: list[np.ndarray] = []
 
         try:
+            if not self._apply_event_overlays:
+                self._cleanup_cached_detections(cached_detections)
+                return [frame.copy() for frame in frames]
+
             if has_person:
                 # Part 1: Use cached detections for frames that were processed
                 if cached_detections and len(cached_detections) > 0:
@@ -910,12 +906,7 @@ class SecuritySystem:
                         processed_frames.append(frame_copy)
 
                     # Cleanup cached detections
-                    for detection in cached_detections:
-                        if detection["boxes"] is not None:
-                            del detection["boxes"]
-                        if detection["classes"] is not None:
-                            del detection["classes"]
-                    del cached_detections
+                    self._cleanup_cached_detections(cached_detections)
 
                 # Part 2: Process remaining frames (after early exit)
                 remaining_frames = frames[len(processed_frames) :]
@@ -970,6 +961,19 @@ class SecuritySystem:
         finally:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+
+    def _cleanup_cached_detections(self, cached_detections) -> None:
+        """Release cached detection tensors to avoid leaks."""
+        if not cached_detections:
+            return
+        for detection in cached_detections:
+            boxes = detection.get("boxes") if isinstance(detection, dict) else None
+            classes = detection.get("classes") if isinstance(detection, dict) else None
+            if boxes is not None:
+                del boxes
+            if classes is not None:
+                del classes
+        cached_detections.clear()
 
     def _generate_gif(self, frames: list[np.ndarray], output_path: Path, fps: int) -> bool:
         """

@@ -149,6 +149,9 @@ class SecuritySystemRunner:
             flattened["BBOX_OVERLAP_THRESHOLD"] = config["detection"].get(
                 "bbox_overlap_threshold", 0.6
             )
+            flattened["APPLY_EVENT_OVERLAYS"] = config["detection"].get(
+                "apply_event_overlays", False
+            )
 
         if "storage" in config:
             flattened["STORAGE_PATH"] = config["storage"].get("path", "recordings")
@@ -173,6 +176,9 @@ class SecuritySystemRunner:
                 "notification_rate_limit", 5
             )
             flattened["MAX_GIF_FRAMES"] = config["notifications"].get("max_gif_frames", 20)
+            flattened["INLINE_MEDIA_MAX_MB"] = config["notifications"].get(
+                "inline_media_max_mb", 9.5
+            )
 
         if "system" in config:
             flattened["CHECK_INTERVAL"] = config["system"].get("check_interval", 5.0)
@@ -335,6 +341,7 @@ class SecuritySystemRunner:
                     gif_worker_threads=self.config.get("GIF_WORKER_THREADS", 2),
                     bg_detect_shadows=self.config.get("BG_DETECT_SHADOWS", True),
                     ui_scale_base=self.config.get("UI_SCALE_BASE", 320),
+                    apply_event_overlays=self.config.get("APPLY_EVENT_OVERLAYS", False),
                 )
 
             except Exception as e:
@@ -366,6 +373,7 @@ class SecuritySystemRunner:
                     gif_fps=self.config.get("NOTIFICATION_GIF_FPS", 10),
                     max_file_size_mb=self.config.get("MAX_FILE_SIZE_MB", 50.0),
                     notification_rate_limit=self.config.get("NOTIFICATION_RATE_LIMIT", 5),
+                    inline_media_max_mb=self.config.get("INLINE_MEDIA_MAX_MB", 9.5),
                     user_whitelist=self.config.get("USER_WHITELIST", []),
                     superuser_id=self.config.get("SUPERUSER_ID"),
                     setup_password=self.config.get("SETUP_PASSWORD"),

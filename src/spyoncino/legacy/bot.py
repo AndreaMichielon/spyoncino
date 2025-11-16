@@ -8,8 +8,10 @@ and user management with authorization, rate limiting, and rich command interfac
 import asyncio
 import io
 import logging
+import os
 import queue
-from contextlib import contextmanager
+import tempfile
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from functools import wraps
@@ -17,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+import imageio.v3 as iio
+import numpy as np
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import NetworkError, TelegramError, TimedOut
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
@@ -34,6 +38,7 @@ class BotConfig:
     gif_fps: int = 10
     max_file_size_mb: float = 50.0
     notification_rate_limit: int = 5
+    inline_media_max_mb: float = 9.5
 
     # Security settings
     user_whitelist: list[int] = field(default_factory=list)
@@ -173,6 +178,7 @@ class SecurityTelegramBot:
         self.event_manager = event_manager
         self.chat_id = chat_id
         self.config = config or BotConfig()
+        self._inline_media_limit = max(1.0, float(self.config.inline_media_max_mb))
 
         # Telegram application
         self.app = Application.builder().token(token).build()
@@ -406,9 +412,7 @@ class SecurityTelegramBot:
     ) -> None:
         """Send notification with media attachment."""
         try:
-            caption = f"<b>{event.message}</b>\n📅 {timestamp_str}"
-
-            # Check file size
+            caption = f"<b>{event.message}</b>\n???? {timestamp_str}"
             file_path = Path(event.event_file)
             file_size_mb = file_path.stat().st_size / (1024 * 1024)
 
@@ -417,15 +421,47 @@ class SecurityTelegramBot:
                 await self._send_text_notification(context, event, timestamp_str)
                 return
 
-            with open(event.event_file, "rb") as f:
-                await context.bot.send_animation(
-                    chat_id=self._get_notification_chat_id(),
-                    animation=f,
-                    caption=caption,
-                    parse_mode="HTML",
-                    read_timeout=self.config.read_timeout,
-                    write_timeout=self.config.write_timeout,
+            send_path, mode, cleanup = await self._prepare_inline_media(file_path, file_size_mb)
+            send_size_mb = send_path.stat().st_size / (1024 * 1024)
+            if send_size_mb > self.config.max_file_size_mb:
+                self.logger.warning(
+                    f"Prepared media still too large ({send_size_mb:.1f}MB), sending text only"
                 )
+                await self._send_text_notification(context, event, timestamp_str)
+                if cleanup:
+                    try:
+                        send_path.unlink()
+                    except OSError:
+                        self.logger.debug("Failed to cleanup temp media after size rejection.")
+                return
+
+            try:
+                with open(send_path, "rb") as media_file:
+                    if mode == "video":
+                        await context.bot.send_video(
+                            chat_id=self._get_notification_chat_id(),
+                            video=media_file,
+                            caption=caption,
+                            parse_mode="HTML",
+                            read_timeout=self.config.read_timeout,
+                            write_timeout=self.config.write_timeout,
+                            supports_streaming=True,
+                        )
+                    else:
+                        await context.bot.send_animation(
+                            chat_id=self._get_notification_chat_id(),
+                            animation=media_file,
+                            caption=caption,
+                            parse_mode="HTML",
+                            read_timeout=self.config.read_timeout,
+                            write_timeout=self.config.write_timeout,
+                        )
+            finally:
+                if cleanup:
+                    try:
+                        send_path.unlink()
+                    except OSError as e:
+                        self.logger.debug(f"Temp media cleanup failed: {e}")
 
             self.logger.info(f"Media notification sent: {event.message}")
 
@@ -435,6 +471,53 @@ class SecurityTelegramBot:
         except (TelegramError, OSError) as e:
             self.logger.error(f"Error sending media notification: {e}")
             raise
+
+    async def _prepare_inline_media(
+        self, file_path: Path, file_size_mb: float
+    ) -> tuple[Path, str, bool]:
+        """Ensure Telegram receives media that renders inline."""
+        inline_limit = self._inline_media_limit
+        if file_path.suffix.lower() == ".gif" and file_size_mb > inline_limit:
+            try:
+                temp_path = await asyncio.to_thread(self._transcode_gif_to_mp4, file_path)
+                return temp_path, "video", True
+            except RuntimeError as exc:
+                self.logger.warning(f"GIF transcode failed, falling back to original media: {exc}")
+        return file_path, "animation", False
+
+    def _transcode_gif_to_mp4(self, gif_path: Path) -> Path:
+        """Convert oversized GIFs into MP4 clips for inline playback."""
+        fd, temp_name = tempfile.mkstemp(prefix="spyoncino_inline_", suffix=".mp4")
+        os.close(fd)
+        temp_path = Path(temp_name)
+        try:
+            frames = iio.imread(gif_path, extension=".gif", index=None)
+            frames_array = np.asarray(frames, dtype=np.uint8)
+            if frames_array.ndim == 2:
+                frames_array = np.expand_dims(frames_array, axis=0)
+                frames_array = np.expand_dims(frames_array, axis=-1)
+            elif frames_array.ndim == 3:
+                if frames_array.shape[-1] in (1, 3, 4):
+                    frames_array = np.expand_dims(frames_array, axis=0)
+                else:
+                    frames_array = np.expand_dims(frames_array, axis=-1)
+            if frames_array.shape[-1] == 1:
+                frames_array = np.repeat(frames_array, 3, axis=-1)
+            if frames_array.shape[-1] > 3:
+                frames_array = frames_array[..., :3]
+            iio.imwrite(
+                temp_path,
+                frames_array,
+                extension=".mp4",
+                fps=max(1, int(self.config.gif_fps)),
+                codec="libx264",
+                macro_block_size=None,
+            )
+            return temp_path
+        except Exception as exc:
+            with suppress(OSError):
+                temp_path.unlink()
+            raise RuntimeError(str(exc)) from exc
 
     async def _send_text_notification(
         self, context: ContextTypes.DEFAULT_TYPE, event: NotificationEvent, timestamp_str: str

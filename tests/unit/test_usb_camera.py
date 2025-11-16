@@ -210,3 +210,45 @@ async def test_usb_camera_reconnects_after_consecutive_failures() -> None:
 
     assert client.connect_calls >= 2  # initial + reconnect
     assert client.close_calls >= 1
+
+
+@pytest.mark.asyncio
+async def test_usb_camera_can_drop_blank_frames_when_enabled() -> None:
+    bus = EventBus(telemetry_enabled=False)
+    await bus.start()
+
+    blank = np.zeros((2, 2, 3), dtype=np.uint8)
+    valid = np.full((2, 2, 3), 200, dtype=np.uint8)
+    client = RecordingUsbClient([blank, valid])
+
+    def factory(source: int | str, width: int | None, height: int | None) -> RecordingUsbClient:
+        return client
+
+    camera = UsbCamera(client_factory=factory)
+    camera.set_bus(bus)
+    await camera.configure(
+        ModuleConfig(
+            options={
+                "camera_id": "garage",
+                "device_index": 1,
+                "drop_blank_frames": True,
+                "max_retries": 5,
+                "retry_backoff": 0.001,
+                "fps": None,
+            }
+        )
+    )
+
+    received = asyncio.Event()
+
+    async def handler(topic: str, payload: Frame) -> None:
+        received.set()
+
+    bus.subscribe("camera.garage.frame", handler)
+    await camera.start()
+    await asyncio.wait_for(received.wait(), timeout=0.5)
+    await camera.stop()
+    await bus.stop()
+
+    assert client.connect_calls == 1
+    assert client.close_calls == 1

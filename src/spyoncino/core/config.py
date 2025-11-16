@@ -252,9 +252,11 @@ class GifOutputSettings(BaseModel):
 
     duration_seconds: float = Field(default=3.0)
     fps: int = Field(default=15)
-    notification_fps: int = Field(default=10)
     max_frames: int = Field(default=20)
     max_file_size_mb: float = Field(default=50.0)
+    max_dimension: int = Field(
+        default=640, description="Maximum width or height in pixels for GIF frames"
+    )
 
 
 class VideoNotificationSettings(BaseModel):
@@ -838,6 +840,7 @@ class ConfigSnapshot(BaseModel):
                     "fps": gif_settings.fps,
                     "duration_seconds": gif_settings.duration_seconds,
                     "max_frames": gif_settings.max_frames,
+                    "max_dimension": gif_settings.max_dimension,
                 },
             )
 
@@ -932,6 +935,7 @@ class ConfigSnapshot(BaseModel):
                     "read_timeout": self.advanced.telegram_read_timeout,
                     "write_timeout": self.advanced.telegram_write_timeout,
                     "send_typing_action": self.telegram_behavior.send_typing_action,
+                    "gif_notification_fps": self.notifications.gif.fps,
                 }
             )
 
@@ -1141,12 +1145,39 @@ class ConfigSnapshot(BaseModel):
                 options["chat_targets"] = default_targets
             if options.get("chat_id") is None:
                 raise ConfigError("Telegram notifier manifest entries require a chat_id.")
-            options.setdefault("topic", self.rate_limit.output_topic)
-            options.setdefault("gif_topic", "event.gif.ready")
-            options.setdefault("clip_topic", "event.clip.ready")
+            motion_pref = (self.notifications.output_for_motion or "text").strip().lower()
+            detection_pref = (self.notifications.output_for_detection or "gif").strip().lower()
+
+            wants_motion_snapshot = motion_pref in ("text", "snap")
+            wants_motion_text = motion_pref == "text"
+            wants_motion_gif = motion_pref == "gif"
+            wants_motion_video = motion_pref == "video"
+            wants_detection_gif = detection_pref == "gif"
+            wants_detection_video = detection_pref == "video"
+
+            snapshot_topic_default = self.rate_limit.output_topic if wants_motion_snapshot else None
+            gif_topic_default = (
+                "event.gif.ready" if (wants_motion_gif or wants_detection_gif) else None
+            )
+            clip_topic_default = (
+                self.clip.output_topic
+                if (self.clip.enabled and (wants_motion_video or wants_detection_video))
+                else None
+            )
+
+            if "topic" not in options:
+                options["topic"] = snapshot_topic_default
+            if "gif_topic" not in options:
+                options["gif_topic"] = gif_topic_default
+            if "clip_topic" not in options:
+                options["clip_topic"] = clip_topic_default
+            if "snapshot_delivery" not in options:
+                default_delivery = "text" if wants_motion_text else "photo"
+                options["snapshot_delivery"] = default_delivery
             options.setdefault("read_timeout", self.advanced.telegram_read_timeout)
             options.setdefault("write_timeout", self.advanced.telegram_write_timeout)
             options.setdefault("send_typing_action", self.telegram_behavior.send_typing_action)
+            options.setdefault("gif_notification_fps", self.notifications.gif.fps)
         elif module_name == "modules.output.rate_limiter":
             options.setdefault("input_topic", self.rate_limit.input_topic)
             options.setdefault("output_topic", self.rate_limit.output_topic)

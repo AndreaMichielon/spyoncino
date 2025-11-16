@@ -121,6 +121,7 @@ class UsbCamera(BaseModule):
         self._frame_width: int | None = None
         self._frame_height: int | None = None
         self._sequence = 0
+        self._drop_blank_frames = False
 
     async def configure(self, config: ModuleConfig) -> None:
         await super().configure(config)
@@ -143,6 +144,7 @@ class UsbCamera(BaseModule):
         self._frame_width = int(width) if width is not None else None
         height = options.get("frame_height", self._frame_height)
         self._frame_height = int(height) if height is not None else None
+        self._drop_blank_frames = bool(options.get("drop_blank_frames", self._drop_blank_frames))
 
     async def start(self) -> None:
         if self._source is None:
@@ -167,19 +169,29 @@ class UsbCamera(BaseModule):
 
     async def _run(self) -> None:
         retry_count = 0
+        last_failure_reason = "read failures"
         assert self._client is not None
         frame_interval = 0.0
         if self._fps:
             frame_interval = 0.0 if self._fps <= 0 else 1.0 / self._fps
         while self._running.is_set():
             frame = await self._client.read()
+            failure_reason = "read failures"
+            if frame is None:
+                failure_reason = "read failures"
+            elif self._drop_blank_frames and self._is_blank_frame(frame):
+                failure_reason = "blank frames"
+                frame = None
+
             if frame is None:
                 retry_count += 1
+                last_failure_reason = failure_reason
                 if retry_count > self._max_retries:
                     logger.warning(
-                        "USB camera %s encountered %d read failures; reconnecting.",
+                        "USB camera %s encountered %d consecutive %s; reconnecting.",
                         self._camera_id,
                         retry_count,
+                        last_failure_reason,
                     )
                     await self._client.close()
                     await asyncio.sleep(self._retry_backoff)
@@ -190,6 +202,7 @@ class UsbCamera(BaseModule):
                 continue
 
             retry_count = 0
+            last_failure_reason = "read failures"
             frame_bytes, metadata = self._encode_frame(frame)
             self._sequence += 1
             encoding_lower = self._encoding.lower()
@@ -218,6 +231,12 @@ class UsbCamera(BaseModule):
             body = buffer.getvalue()
         metadata = {"width": width, "height": height, "source": str(self._source)}
         return body, metadata
+
+    @staticmethod
+    def _is_blank_frame(frame: np.ndarray) -> bool:
+        if frame.size == 0:
+            return True
+        return not frame.any()
 
 
 __all__ = ["UsbCamera", "UsbCaptureClient"]

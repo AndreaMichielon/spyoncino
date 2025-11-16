@@ -13,6 +13,7 @@ class StubSender:
         self.photos: list[tuple[int | str, Path, str | None]] = []
         self.animations: list[tuple[int | str, Path, str | None]] = []
         self.videos: list[tuple[int | str, Path, str | None]] = []
+        self.messages: list[tuple[int | str, str]] = []
         self.sent = asyncio.Event()
 
     async def send_photo(
@@ -43,6 +44,15 @@ class StubSender:
         caption: str | None = None,
     ) -> None:
         self.videos.append((chat_id, file_path, caption))
+        self.sent.set()
+
+    async def send_message(
+        self,
+        *,
+        chat_id: int | str,
+        text: str,
+    ) -> None:
+        self.messages.append((chat_id, text))
         self.sent.set()
 
 
@@ -80,6 +90,43 @@ async def test_telegram_notifier_uses_sender(tmp_path: Path) -> None:
     assert chat_id == 999
     assert recorded_path == artifact_path
     assert "lab" in (caption or "")
+
+
+@pytest.mark.asyncio
+async def test_telegram_notifier_sends_text_when_configured(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "snap.png"
+    artifact_path.write_text("unused")
+
+    sender = StubSender()
+    notifier = TelegramNotifier(sender=sender)
+    orchestrator = Orchestrator()
+
+    await orchestrator.add_module(
+        notifier,
+        config=ModuleConfig(
+            options={
+                "chat_id": 321,
+                "topic": "event.snapshot.ready",
+                "snapshot_delivery": "text",
+            }
+        ),
+    )
+
+    await orchestrator.start()
+    artifact = SnapshotArtifact(
+        camera_id="lab",
+        artifact_path=str(artifact_path),
+        metadata={"detection": {"detector_id": "motion-basic", "confidence": 0.4}},
+    )
+    await orchestrator.bus.publish("event.snapshot.ready", artifact)
+    await asyncio.wait_for(sender.sent.wait(), timeout=1.0)
+    await orchestrator.stop()
+
+    assert len(sender.messages) == 1
+    chat_id, text = sender.messages[0]
+    assert chat_id == 321
+    assert "lab" in text
+    assert not sender.photos
 
 
 @pytest.mark.asyncio
@@ -166,4 +213,52 @@ async def test_telegram_notifier_broadcasts_to_all_targets(tmp_path: Path) -> No
     await orchestrator.stop()
 
     assert sorted(chat for chat, *_ in sender.photos) == [111, 222]
-    assert sorted(chat for chat, *_ in sender.animations) == [333, 444]
+    gif_chats = {
+        *[chat for chat, *_ in sender.animations],
+        *[chat for chat, *_ in sender.videos],
+    }
+    assert sorted(gif_chats) == [333, 444]
+
+
+@pytest.mark.asyncio
+async def test_telegram_notifier_transcodes_large_gifs(tmp_path: Path) -> None:
+    gif_path = tmp_path / "event.gif"
+    gif_path.write_bytes(b"x" * 2048)
+    converted_path = tmp_path / "converted.mp4"
+
+    sender = StubSender()
+    notifier = TelegramNotifier(sender=sender)
+    orchestrator = Orchestrator()
+
+    await orchestrator.add_module(
+        notifier,
+        config=ModuleConfig(
+            options={
+                "chat_id": 777,
+                "gif_topic": "event.gif.ready",
+                "transcode_large_gifs": True,
+                "inline_animation_max_mb": 0.0001,
+            }
+        ),
+    )
+
+    def fake_transcode(self, _gif_path: Path) -> Path:
+        converted_path.write_bytes(b"mp4-bytes")
+        return converted_path
+
+    notifier._transcode_gif_to_mp4 = fake_transcode.__get__(notifier, TelegramNotifier)
+
+    await orchestrator.start()
+    gif = SnapshotArtifact(
+        camera_id="yard",
+        artifact_path=str(gif_path),
+        content_type="image/gif",
+        metadata={},
+    )
+    await orchestrator.bus.publish("event.gif.ready", gif)
+    await asyncio.wait_for(sender.sent.wait(), timeout=1.0)
+    await orchestrator.stop()
+
+    assert sender.videos, "Expected GIF to be sent as video after transcode"
+    assert sender.videos[0][1] == converted_path
+    assert not converted_path.exists(), "Temporary MP4 should be cleaned up"

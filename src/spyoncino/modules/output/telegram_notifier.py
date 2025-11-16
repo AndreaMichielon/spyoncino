@@ -9,8 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Protocol
+
+import imageio.v3 as iio
+import numpy as np
 
 from ...core.bus import Subscription
 from ...core.contracts import BaseModule, MediaArtifact, ModuleConfig, SnapshotArtifact
@@ -47,6 +53,13 @@ class TelegramSender(Protocol):
         chat_id: int | str,
         file_path: Path,
         caption: str | None = None,
+    ) -> None: ...
+
+    async def send_message(
+        self,
+        *,
+        chat_id: int | str,
+        text: str,
     ) -> None: ...
 
 
@@ -94,6 +107,17 @@ class BotTelegramSender:
         caption: str | None = None,
     ) -> None:
         await self._send(chat_id, file_path, caption, method="video")
+
+    async def send_message(
+        self,
+        *,
+        chat_id: int | str,
+        text: str,
+    ) -> None:
+        try:
+            await asyncio.to_thread(self._bot.send_message, chat_id=chat_id, text=text)
+        except self._telegram_error as exc:  # pragma: no cover - network errors
+            raise TelegramSendError(str(exc)) from exc
 
     async def _send(
         self,
@@ -144,9 +168,17 @@ class TelegramNotifier(BaseModule):
             "gif": [],
             "clip": [],
         }
+        self._delivery_modes: dict[str, str] = {
+            "snapshot": "photo",
+            "gif": "animation",
+            "clip": "video",
+        }
         self._token: str | None = None
         self._read_timeout = 30.0
         self._write_timeout = 60.0
+        self._inline_animation_limit_mb = 9.5
+        self._transcode_large_gifs = False
+        self._gif_notification_fps = 10
         self._caption_templates = {
             "snapshot": (
                 "Motion detected on {camera_id} "
@@ -188,6 +220,23 @@ class TelegramNotifier(BaseModule):
             self._caption_templates["gif"] = options["gif_message_template"]
         if "clip_message_template" in options:
             self._caption_templates["clip"] = options["clip_message_template"]
+        self._delivery_modes["snapshot"] = self._normalize_delivery(
+            options.get("snapshot_delivery"), default=self._delivery_modes["snapshot"]
+        )
+        self._delivery_modes["gif"] = self._normalize_delivery(
+            options.get("gif_delivery"), default=self._delivery_modes["gif"]
+        )
+        self._delivery_modes["clip"] = self._normalize_delivery(
+            options.get("clip_delivery"), default=self._delivery_modes["clip"]
+        )
+        self._inline_animation_limit_mb = float(
+            options.get("inline_animation_max_mb", self._inline_animation_limit_mb)
+        )
+        if "transcode_large_gifs" in options:
+            self._transcode_large_gifs = bool(options.get("transcode_large_gifs"))
+        self._gif_notification_fps = int(
+            options.get("gif_notification_fps", self._gif_notification_fps)
+        )
 
     async def start(self) -> None:
         if self._sender is None and self._token:
@@ -219,6 +268,10 @@ class TelegramNotifier(BaseModule):
         self._subscriptions.clear()
 
     async def _handle_payload(self, kind: str, topic: str, payload: Any) -> None:
+        mode = self._delivery_modes.get(kind, "")
+        if mode in {"none", "disabled"}:
+            logger.debug("Skipping %s notification because mode=%s", kind, mode)
+            return
         if kind == "clip":
             if isinstance(payload, MediaArtifact):
                 await self._deliver_clip(payload)
@@ -232,26 +285,68 @@ class TelegramNotifier(BaseModule):
         if sender is None or not recipients:
             logger.debug("Skipping %s notification because sender/chat is unavailable.", kind)
             return
+        mode = (self._delivery_modes.get(kind, "photo") or "photo").lower()
+        if mode == "text":
+            await self._deliver_text(artifact, kind)
+            return
         file_path = Path(artifact.artifact_path)
         if not file_path.exists():
             logger.warning("Artifact path %s does not exist; skipping.", file_path)
+            return
+        is_gif_artifact = (
+            kind == "gif"
+            or "gif" in (artifact.content_type or "").lower()
+            or file_path.suffix.lower() == ".gif"
+        )
+        if is_gif_artifact and mode not in {"animation", "video", "text"}:
+            mode = "animation"
+        caption = self._render_caption(kind, artifact.metadata, artifact.camera_id)
+        prepared_path = file_path
+        cleanup_path: Path | None = None
+        try:
+            if is_gif_artifact:
+                prepared_path, mode, cleanup_path = await self._prepare_gif_delivery(
+                    file_path, mode
+                )
+            failures = 0
+            for chat_id in recipients:
+                try:
+                    await self._send_media(
+                        sender=sender,
+                        mode=mode,
+                        chat_id=chat_id,
+                        file_path=prepared_path,
+                        caption=caption,
+                    )
+                    logger.info(
+                        "TelegramNotifier delivered %s %s to %s", kind, prepared_path.name, chat_id
+                    )
+                except TelegramSendError as exc:
+                    failures += 1
+                    logger.error("Telegram %s notification failed for %s: %s", kind, chat_id, exc)
+            if failures and failures == len(recipients):
+                logger.warning("All Telegram %s deliveries failed for %s", kind, prepared_path.name)
+        finally:
+            if cleanup_path is not None:
+                await asyncio.to_thread(self._safe_unlink, cleanup_path)
+
+    async def _deliver_text(self, artifact: SnapshotArtifact, kind: str) -> None:
+        sender = self._sender
+        recipients = self._recipients_for(kind)
+        if sender is None or not recipients:
+            logger.debug("Skipping %s text notification because sender/chat is unavailable.", kind)
             return
         caption = self._render_caption(kind, artifact.metadata, artifact.camera_id)
         failures = 0
         for chat_id in recipients:
             try:
-                if kind == "gif" or "gif" in (artifact.content_type or ""):
-                    await sender.send_animation(
-                        chat_id=chat_id, file_path=file_path, caption=caption
-                    )
-                else:
-                    await sender.send_photo(chat_id=chat_id, file_path=file_path, caption=caption)
-                logger.info("TelegramNotifier delivered %s %s to %s", kind, file_path.name, chat_id)
+                await sender.send_message(chat_id=chat_id, text=caption)
+                logger.info("TelegramNotifier delivered text %s to %s", kind, chat_id)
             except TelegramSendError as exc:
                 failures += 1
-                logger.error("Telegram %s notification failed for %s: %s", kind, chat_id, exc)
+                logger.error("Telegram text notification failed for %s: %s", chat_id, exc)
         if failures and failures == len(recipients):
-            logger.warning("All Telegram %s deliveries failed for %s", kind, file_path.name)
+            logger.warning("All Telegram text deliveries failed for %s", artifact.camera_id)
 
     async def _deliver_clip(self, artifact: MediaArtifact) -> None:
         sender = self._sender
@@ -275,6 +370,90 @@ class TelegramNotifier(BaseModule):
         if failures and failures == len(recipients):
             logger.warning("All Telegram clip deliveries failed for %s", file_path.name)
 
+    async def _send_media(
+        self,
+        *,
+        sender: TelegramSender,
+        mode: str,
+        chat_id: int | str,
+        file_path: Path,
+        caption: str | None,
+    ) -> None:
+        delivery_mode = (mode or "photo").lower()
+        if delivery_mode == "video":
+            await sender.send_video(chat_id=chat_id, file_path=file_path, caption=caption)
+        elif delivery_mode == "animation":
+            await sender.send_animation(chat_id=chat_id, file_path=file_path, caption=caption)
+        else:
+            await sender.send_photo(chat_id=chat_id, file_path=file_path, caption=caption)
+
+    async def _prepare_gif_delivery(
+        self, file_path: Path, mode: str
+    ) -> tuple[Path, str, Path | None]:
+        resolved_mode = (mode or "animation").lower()
+        if file_path.suffix.lower() == ".mp4":
+            return file_path, "video", None
+        try:
+            file_size = file_path.stat().st_size
+        except OSError as exc:
+            logger.warning("Unable to stat artifact %s: %s", file_path, exc)
+            return file_path, resolved_mode or "animation", None
+
+        limit_bytes = max(1, int(self._inline_animation_limit_mb * 1024 * 1024))
+        needs_transcode = resolved_mode == "video"
+        if not needs_transcode and self._transcode_large_gifs and file_size > limit_bytes:
+            needs_transcode = True
+
+        if not needs_transcode:
+            return file_path, "animation", None
+
+        try:
+            temp_path = await asyncio.to_thread(self._transcode_gif_to_mp4, file_path)
+        except Exception as exc:
+            logger.warning("GIF transcode failed for %s: %s", file_path, exc)
+            return file_path, "animation", None
+
+        return temp_path, "video", temp_path
+
+    def _transcode_gif_to_mp4(self, gif_path: Path) -> Path:
+        fd, temp_name = tempfile.mkstemp(prefix="spyoncino_gif_", suffix=".mp4")
+        os.close(fd)
+        temp_path = Path(temp_name)
+        try:
+            frames = iio.imread(gif_path, extension=".gif", index=None)
+            frames_array = np.asarray(frames, dtype=np.uint8)
+            if frames_array.ndim == 3:
+                frames_array = np.expand_dims(frames_array, axis=0)
+            if frames_array.ndim == 2:
+                frames_array = np.expand_dims(frames_array, axis=0)
+                frames_array = np.expand_dims(frames_array, axis=-1)
+            if frames_array.shape[-1] == 1:
+                frames_array = np.repeat(frames_array, 3, axis=-1)
+            if frames_array.shape[-1] > 3:
+                frames_array = frames_array[..., :3]
+            iio.imwrite(
+                temp_path,
+                frames_array,
+                extension=".mp4",
+                fps=max(1, int(self._gif_notification_fps)),
+                codec="libx264",
+                macro_block_size=None,
+            )
+            return temp_path
+        except Exception:
+            with suppress(OSError):
+                temp_path.unlink()
+            raise
+
+    @staticmethod
+    def _safe_unlink(path: Path) -> None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            logger.debug("Failed to cleanup temporary media %s: %s", path, exc)
+
     def _render_caption(self, kind: str, metadata: dict[str, Any], camera_id: str) -> str:
         detection = metadata.get("detection") or {}
         template = self._caption_templates.get(kind) or self._caption_templates["snapshot"]
@@ -288,6 +467,14 @@ class TelegramNotifier(BaseModule):
             return template.format(**template_vars)
         except KeyError:
             return f"Event detected on {camera_id}"
+
+    def _normalize_delivery(self, value: Any, *, default: str) -> str:
+        if value is None:
+            return default
+        result = str(value).strip().lower()
+        if not result:
+            return default
+        return result
 
     def _normalize_targets(self, value: Any) -> list[int | str]:
         """Return a deduplicated list of chat targets."""

@@ -82,10 +82,10 @@ detection:
 
     gif:
       duration_seconds: 3          # Seconds captured per GIF
-      fps: 15                      # GIF playback FPS
-      notification_fps: 10         # Telegram transfer fps to keep payloads small
-      max_frames: 20               # Max frames per GIF
+      fps: 15                      # GIF playback FPS (also used when transcoding to MP4 for Telegram)
+      max_frames: 20               # Max frames per GIF (smart selection if more frames available)
       max_file_size_mb: 50.0       # Upper bound for GIF payload size
+      max_dimension: 640           # Maximum width or height in pixels (reduces file size significantly)
 
     video:
       duration_seconds: 5.0        # Seconds captured per clip when sent via notifier
