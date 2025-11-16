@@ -8,6 +8,7 @@ using python-telegram-bot by default.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import tempfile
@@ -115,7 +116,9 @@ class BotTelegramSender:
         text: str,
     ) -> None:
         try:
-            await asyncio.to_thread(self._bot.send_message, chat_id=chat_id, text=text)
+            result = self._bot.send_message(chat_id=chat_id, text=text)
+            if inspect.isawaitable(result):
+                await result
         except self._telegram_error as exc:  # pragma: no cover - network errors
             raise TelegramSendError(str(exc)) from exc
 

@@ -206,13 +206,8 @@ outputs:
     per_seconds: 60                        # Window size (seconds)
     key_field: "camera_id"                 # Apply throttle separately per this field
   modules:
-    - module: modules.output.telegram_notifier   # Primary Telegram notifier
+    - module: modules.output.telegram_notifier   # Telegram notifier
       additive: true
-    - module: modules.output.telegram_notifier   # Optional backup notifier (disabled)
-      enabled: true
-      additive: true
-      options:
-        message_template: "Backup notifier - motion on {camera_id}"
     - module: modules.output.email_notifier      # Email notifier (disabled by default)
       enabled: false
       additive: true

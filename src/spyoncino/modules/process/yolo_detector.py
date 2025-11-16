@@ -10,8 +10,10 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import imageio.v3 as iio
 import numpy as np
@@ -49,7 +51,89 @@ class UltralyticsPredictor(PredictorProtocol):
             from ultralytics import YOLO
         except ModuleNotFoundError as exc:  # pragma: no cover - import guard
             raise RuntimeError("Ultralytics is not installed") from exc
-        self._model = YOLO(model_path or "yolov8n.pt")
+
+        # Legacy-friendly weight resolution:
+        # 1) If a model_path is configured and exists, use it.
+        # 2) Else, try to use Ultralytics cache for yolov8n.pt.
+        # 3) Else, trigger a one-time download via YOLO('yolov8n.pt'), then copy from cache.
+        resolved_path: Path | None = None
+        try:
+            if model_path:
+                candidate = Path(model_path)
+                if candidate.exists():
+                    resolved_path = candidate
+                else:
+                    # Try to resolve from Ultralytics cache and copy to configured location
+                    try:
+                        from ultralytics.utils import WEIGHTS_DIR  # type: ignore
+
+                        cached = Path(WEIGHTS_DIR) / "yolov8n.pt"
+                        if not cached.exists():
+                            # Trigger download to cache (Ultralytics may place into cache or CWD)
+                            logger.debug(
+                                "Downloading yolov8n.pt via Ultralytics for configured model_path..."
+                            )
+                            _ = YOLO("yolov8n.pt")
+                        # Prefer cache; fallback to CWD if Ultralytics placed file locally
+                        source = cached if cached.exists() else Path("yolov8n.pt")
+                        if source.exists():
+                            candidate.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(str(source), str(candidate))
+                            logger.debug(
+                                "YOLO weights copied to configured path: %s (from %s)",
+                                candidate,
+                                source,
+                            )
+                            resolved_path = candidate
+                        else:
+                            logger.warning(
+                                "YOLO weights download did not produce a visible file (cache or CWD missing)."
+                            )
+                            resolved_path = None
+                    except Exception as e:
+                        logger.warning(
+                            "Failed copying YOLO weights to configured path %s: %s", candidate, e
+                        )
+                        # Fallback: allow YOLO to resolve built-in name
+                        resolved_path = None
+            else:
+                # No model_path configured: materialize weights under config/yolov8n.pt (legacy behavior)
+                default_target = Path("config") / "yolov8n.pt"
+                try:
+                    from ultralytics.utils import WEIGHTS_DIR  # type: ignore
+
+                    cached = Path(WEIGHTS_DIR) / "yolov8n.pt"
+                    if not cached.exists():
+                        # Trigger download (may land in cache or CWD depending on settings)
+                        logger.debug(
+                            "Downloading yolov8n.pt via Ultralytics (default to config/yolov8n.pt)..."
+                        )
+                        _ = YOLO("yolov8n.pt")
+                    # Pick source: cache preferred, else CWD
+                    source = cached if cached.exists() else Path("yolov8n.pt")
+                    if source.exists():
+                        default_target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(source), str(default_target))
+                        logger.debug(
+                            "YOLO weights copied to default config path: %s (from %s)",
+                            default_target,
+                            source,
+                        )
+                        resolved_path = default_target
+                    else:
+                        logger.warning(
+                            "YOLO weights not found in cache or CWD after download attempt."
+                        )
+                        resolved_path = None
+                except Exception as e:
+                    logger.warning("Failed preparing default YOLO weights under config/: %s", e)
+                    resolved_path = None
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("YOLO weight resolution fell back to default: %s", exc, exc_info=True)
+            resolved_path = None
+
+        # Instantiate model from a stable local path when available
+        self._model = YOLO(str(resolved_path) if resolved_path is not None else "yolov8n.pt")
         names = getattr(self._model, "names", {})
         if isinstance(names, dict):
             self._class_names = [str(value) for value in names.values()]
@@ -59,8 +143,8 @@ class UltralyticsPredictor(PredictorProtocol):
             self._class_names = []
 
     def predict(self, image: np.ndarray) -> list[DetectionCandidate]:  # pragma: no cover - heavy
-        results = self._model(
-            image,
+        results = self._model.predict(
+            source=image,
             verbose=False,
         )
         candidates: list[DetectionCandidate] = []

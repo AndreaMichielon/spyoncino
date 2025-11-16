@@ -102,6 +102,12 @@ class GifBuilder(BaseModule):
         all_selected = frames[-target_frames:] if len(frames) > target_frames else frames
         timestamp = all_selected[-1].timestamp_utc
         processed_frames = await asyncio.to_thread(self._prepare_frames, all_selected, payload)
+        if not processed_frames:
+            logger.warning(
+                "No decodable frames available for GIF generation on camera %s; skipping.",
+                payload.camera_id,
+            )
+            return
         async with self._write_lock:
             path = await self._write_gif(payload.camera_id, processed_frames, timestamp)
             await self._prune_output_dir()
@@ -145,9 +151,11 @@ class GifBuilder(BaseModule):
         prev_gray: np.ndarray | None = None
 
         for frame in frames:
-            if frame.image_bytes is None:
+            try:
+                image = self._decode_frame(frame)
+            except Exception as exc:  # robust against sporadic decoding errors
+                logger.debug("Skipping undecodable frame during GIF prep: %s", exc)
                 continue
-            image = self._decode_frame(frame)
             if self._apply_overlays:
                 if overlay_mode == "detection" and boxes:
                     image = self._draw_detection_overlay(image, detection, boxes)
@@ -156,7 +164,8 @@ class GifBuilder(BaseModule):
             prepared.append(image)
 
         if not prepared:
-            raise RuntimeError("Failed to decode frames for GIF generation.")
+            # Return empty list to let caller decide to skip gracefully
+            return []
 
         # Resize frames (selection already handled by target_frames upstream)
         resized_frames = [self._resize_for_gif(frame) for frame in prepared]

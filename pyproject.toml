@@ -33,7 +33,8 @@ dependencies = [
     "boto3>=1.35.0",
     "torch>=2.0.0",
     "torchvision>=0.15.0",
-    "ultralytics>=8.3.184",
+    # Pin only Ultralytics to avoid BN fusion edge-cases while keeping Torch flexible
+    "ultralytics==8.3.34",
     "uvicorn>=0.30.0",
 ]
 
