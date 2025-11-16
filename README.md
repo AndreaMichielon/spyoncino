@@ -194,7 +194,15 @@ spyoncino-legacy --help
 
 ### Telegram Bot Commands
 
+The modular Telegram bot is split into two roles:
+
+- **Security bot (legacy stack)**: rich, single-camera control (unchanged).
+- **Dashboard control bot (modular stack)**: thin, multi-camera control surface that talks over the event bus.
+
+The table below documents the **dashboard Telegram control bot** commands exposed by `modules.dashboard.telegram_bot.TelegramControlBot`.
+
 **Before You're Authorized:**
+
 | Command | Function |
 |---------|----------|
 | `/start` | Intro message with next steps |
@@ -202,30 +210,59 @@ spyoncino-legacy --help
 | `/whoami` | Show your Telegram ID and access status |
 | `/setup <password>` | First-time superuser setup (only before a superuser exists) |
 
-**Essential (Once Authorized):**
-| Command | Function |
-|---------|----------|
-| `/status` | System overview |
-| `/recordings` | Browse with interactive buttons |
-| `/snap` | Live camera snapshot |
-| `/config <key> <value>` | Runtime configuration |
-
 > ℹ️ **Note:** Not whitelisted yet? Run `/whoami`, copy the ID, and share it with the superuser to get access.
 
-**Configuration Examples:**
-```
-/config interval 1.5          # Faster detection
-/config confidence 0.15       # More sensitive AI
-/config gif_motion on         # Enable motion GIFs
-```
+**Status & Health:**
 
-> 💡 **Tip:** You can also edit `config/config.yaml` directly for permanent changes
+| Command | Function |
+|---------|----------|
+| `/status` | System health summary from `status.health.summary` |
+| `/stats` | Storage and basic telemetry (`StorageStats`) |
+
+**Camera Control (per-camera or global):**
+
+| Command | Function |
+|---------|----------|
+| `/enable [camera_id]` | Enable a camera (`camera.state` with `enabled=true`) |
+| `/disable [camera_id]` | Disable a camera (`enabled=false`) |
+| `/snapshot [camera_id]` or `/snap [camera_id]` | Request a snapshot from a camera (`camera.snapshot`) |
+| `/start_monitor [camera_id]` | Start monitoring globally or for a specific camera (`system.monitor.start`) |
+| `/stop_monitor [camera_id]` | Stop monitoring globally or for a specific camera (`system.monitor.stop`) |
+
+**Recordings & Playback:**
+
+| Command | Function |
+|---------|----------|
+| `/recordings [camera_id]` | Ask the backend for recordings list; shows **inline buttons** grouped as Today/Yesterday/Older |
+| (tap button) | Sends a `recordings.get` command for that item and replies with the GIF/clip |
+| `/get <event_name>` | Request a specific recording by filename stem (e.g. `person_20250101_121500`) |
+| `/get <camera_id>` | Request the **latest recording** whose filename contains `<camera_id>` (best-effort) |
+
+**Analytics & Debug:**
+
+| Command | Function |
+|---------|----------|
+| `/timeline [hours]` | Request an analytics timeline image for the last N hours (`analytics.timeline`) |
+| `/analytics [hours]` | Request an analytics summary for the last N hours (`analytics.summary`) |
+| `/test` | Queue a test notification through the dashboard (`system.notification.test`) |
+
+**Configuration (Dashboard & Bot):**
+
+| Command | Function |
+|---------|----------|
+| `/config <key> <value>` | Superuser-only; forwards a generic configuration update as `config.update` |
+| `/show_config` | Superuser-only; shows current Telegram control bot settings (rate limit, whitelist, topics, etc.) |
 
 **Admin (Superuser Only):**
-- `/whitelist_add <user_id>` - Authorize users
-- `/whitelist_remove <user_id>` - Remove user access  
-- `/whitelist_list` - Show authorized users
-- `/cleanup` - Force file cleanup
+
+| Command | Function |
+|---------|----------|
+| `/whitelist_add <user_id>` | Add a Telegram user id to the whitelist |
+| `/whitelist_remove <user_id>` | Remove a user from the whitelist |
+| `/whitelist_list` | Show all whitelisted users |
+| `/cleanup` | Request an aggressive storage cleanup (`storage.cleanup`) |
+
+> 💡 **Tip:** For permanent changes (camera manifests, detection thresholds, etc.) prefer editing `config/config.yaml` and reloading via `config.update`, and use `/config` for quick, runtime experiments.
 
 ## Configuration Files
 

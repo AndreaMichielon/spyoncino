@@ -135,3 +135,75 @@ async def test_cleanup_command_publishes_storage_request() -> None:
     assert topic == "dashboard.control.command"
     assert payload.command == "storage.cleanup"
     assert payload.camera_id is None
+
+
+@pytest.mark.asyncio
+async def test_start_monitor_command_supports_global_and_camera() -> None:
+    bot = TelegramControlBot()
+    bus = DummyBus()
+    bot.set_bus(bus)  # type: ignore[arg-type]
+    await bot.configure(
+        ModuleConfig(
+            options={
+                "token": "123:ABC",
+                "default_camera_id": "front",
+                "command_topic": "dashboard.control.command",
+                "user_whitelist": [7],
+            }
+        )
+    )
+
+    # Global (no camera arg, no default camera set in context)
+    update_global = FakeUpdate(user_id=7)
+    context_global = FakeContext(args=[])
+    await bot._cmd_start_monitor(update_global, context_global)
+
+    # Camera-specific
+    update_cam = FakeUpdate(user_id=7)
+    context_cam = FakeContext(args=["garage"])
+    await bot._cmd_start_monitor(update_cam, context_cam)
+
+    assert len(bus.published) == 2
+    topic0, payload0 = bus.published[0]
+    topic1, payload1 = bus.published[1]
+
+    assert topic0 == "dashboard.control.command"
+    assert payload0.command == "system.monitor.start"
+    assert payload0.camera_id is None
+
+    assert topic1 == "dashboard.control.command"
+    assert payload1.command == "system.monitor.start"
+    assert payload1.camera_id == "garage"
+
+
+@pytest.mark.asyncio
+async def test_recordings_command_attaches_request_id() -> None:
+    bot = TelegramControlBot()
+    bus = DummyBus()
+    bot.set_bus(bus)  # type: ignore[arg-type]
+    await bot.configure(
+        ModuleConfig(
+            options={
+                "token": "123:ABC",
+                "default_camera_id": "front",
+                "command_topic": "dashboard.control.command",
+                "user_whitelist": [7],
+            }
+        )
+    )
+
+    update = FakeUpdate(user_id=7)
+    context = FakeContext(args=["front"])
+
+    await bot._cmd_recordings(update, context)
+
+    assert len(bus.published) == 1
+    topic, payload = bus.published[0]
+    assert topic == "dashboard.control.command"
+    assert payload.command == "recordings.list"
+    assert payload.camera_id == "front"
+    # Request id must be present in arguments and tracked in bot state
+    request_id = payload.arguments.get("request_id")
+    assert isinstance(request_id, str) and request_id
+    # Internal state should remember the request for later result handling
+    assert request_id in bot._recordings_requests

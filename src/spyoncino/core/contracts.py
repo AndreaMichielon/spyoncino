@@ -343,3 +343,39 @@ class ResilienceEvent(BasePayload):
     topic: str | None = Field(default=None)
     action: Literal["latency", "drop", "enable", "disable", "status"] = Field(default="status")
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class RecordingListItem(BasePayload):
+    """Single recording entry returned to dashboards for interactive selection."""
+
+    id: str = Field(description="Opaque identifier for the recording within the list result.")
+    label: str = Field(description="Human readable label for buttons/menus.")
+    path: str | None = Field(
+        default=None,
+        description="Optional absolute path to the recording on disk (for local access).",
+    )
+    event_name: str | None = Field(
+        default=None, description="Optional short event name (e.g. filename stem)."
+    )
+    camera_id: str | None = Field(default=None)
+    timestamp_utc: dt.datetime | None = Field(
+        default=None, description="Optional timestamp parsed from filename or metadata."
+    )
+
+
+class RecordingsListResult(BasePayload):
+    """Result payload for a recordings list request, emitted to dashboards."""
+
+    request_id: str = Field(description="Correlation id supplied by the dashboard request.")
+    camera_id: str | None = Field(default=None)
+    items: list[RecordingListItem] = Field(default_factory=list)
+
+
+class RecordingGetResult(BasePayload):
+    """Result payload for a single recording request."""
+
+    request_id: str = Field(description="Correlation id supplied by the dashboard request.")
+    item_id: str = Field(description="Identifier of the recording inside the original list.")
+    camera_id: str | None = Field(default=None)
+    path: str = Field(description="Absolute path to the recording on disk.")
+    content_type: str = Field(default="image/gif")
