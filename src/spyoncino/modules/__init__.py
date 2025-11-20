@@ -8,9 +8,13 @@ from .analytics.db_logger import AnalyticsDbLogger
 from .analytics.event_logger import AnalyticsEventLogger
 
 try:  # pragma: no cover - optional dependency
+    from .dashboard.command_handler import DashboardCommandHandler
     from .dashboard.control_api import ControlApi
+    from .dashboard.recordings_service import RecordingsService
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     ControlApi = None
+    DashboardCommandHandler = None
+    RecordingsService = None
 
 try:  # pragma: no cover - optional dependency
     from .dashboard.telegram_bot import TelegramControlBot
@@ -45,12 +49,14 @@ __all__ = [
     "CameraSimulator",
     "ClipBuilder",
     "ControlApi",
+    "DashboardCommandHandler",
     "DetectionEventRouter",
     "EventDeduplicator",
     "GifBuilder",
     "MotionDetector",
     "PrometheusExporter",
     "RateLimiter",
+    "RecordingsService",
     "ResilienceTester",
     "RtspCamera",
     "S3ArtifactUploader",

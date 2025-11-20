@@ -82,13 +82,23 @@ class TelegramControlBot(BaseModule):
         self._storage_subscription: Subscription | None = None
         self._recordings_list_subscription: Subscription | None = None
         self._recording_get_subscription: Subscription | None = None
+        self._snapshot_result_subscription: Subscription | None = None
+        self._timeline_result_subscription: Subscription | None = None
+        self._analytics_result_subscription: Subscription | None = None
         self._health_topic = "status.health.summary"
         self._storage_topic = "storage.stats"
         self._command_topic = "dashboard.control.command"
         self._recordings_list_topic = "dashboard.recordings.list.result"
         self._recording_get_topic = "dashboard.recordings.get.result"
+        self._snapshot_result_topic = "dashboard.snapshot.result"
+        self._timeline_result_topic = "dashboard.timeline.result"
+        self._analytics_result_topic = "dashboard.analytics.result"
         self._last_health: HealthSummary | None = None
         self._last_storage: StorageStats | None = None
+        # Track pending requests for snapshot/timeline/analytics
+        self._snapshot_requests: dict[str, dict[str, Any]] = {}
+        self._timeline_requests: dict[str, dict[str, Any]] = {}
+        self._analytics_requests: dict[str, dict[str, Any]] = {}
         self._default_camera_id: str | None = None
         self._token: str | None = None
         self._user_whitelist: set[int] = set()
@@ -162,6 +172,15 @@ class TelegramControlBot(BaseModule):
         self._recording_get_subscription = self.bus.subscribe(
             self._recording_get_topic, self._handle_recording_get_result
         )
+        self._snapshot_result_subscription = self.bus.subscribe(
+            self._snapshot_result_topic, self._handle_snapshot_result
+        )
+        self._timeline_result_subscription = self.bus.subscribe(
+            self._timeline_result_topic, self._handle_timeline_result
+        )
+        self._analytics_result_subscription = self.bus.subscribe(
+            self._analytics_result_topic, self._handle_analytics_result
+        )
         logger.info("TelegramControlBot started.")
 
     async def stop(self) -> None:
@@ -177,6 +196,15 @@ class TelegramControlBot(BaseModule):
         if self._recording_get_subscription:
             self.bus.unsubscribe(self._recording_get_subscription)
             self._recording_get_subscription = None
+        if self._snapshot_result_subscription:
+            self.bus.unsubscribe(self._snapshot_result_subscription)
+            self._snapshot_result_subscription = None
+        if self._timeline_result_subscription:
+            self.bus.unsubscribe(self._timeline_result_subscription)
+            self._timeline_result_subscription = None
+        if self._analytics_result_subscription:
+            self.bus.unsubscribe(self._analytics_result_subscription)
+            self._analytics_result_subscription = None
         if self._shutdown_event:
             self._shutdown_event.set()
         if self._runner_task:
@@ -313,15 +341,23 @@ class TelegramControlBot(BaseModule):
             if not rows:
                 return
             markup = InlineKeyboardMarkup(rows)
-            await bot.send_message(chat_id=chat_id, text=title, reply_markup=markup)
+            # Format title similar to legacy bot
+            formatted_title = f"{title} ({len(items)} recordings)"
+            await bot.send_message(
+                chat_id=chat_id, text=formatted_title, reply_markup=markup, parse_mode="HTML"
+            )
 
         # Send grouped keyboards, most relevant (Today) first
         if not (today_items or yesterday_items or older_items):
-            await bot.send_message(chat_id=chat_id, text="No recordings available.")
+            await bot.send_message(
+                chat_id=chat_id,
+                text="📂 No recordings found in the last 24 hours.",
+                parse_mode="HTML",
+            )
             return
 
-        await send_group("📅 Today", today_items)
-        await send_group("📅 Yesterday", yesterday_items)
+        await send_group("📅 <b>Today</b>", today_items)
+        await send_group("📅 <b>Yesterday</b>", yesterday_items)
 
         if older_items:
             # Compute rough date range for older items
@@ -382,53 +418,132 @@ class TelegramControlBot(BaseModule):
     async def _cmd_start(self, update: Any, context: Any) -> None:
         if not await self._ensure_command_allowed(update, context):
             return
-        await self._respond(
+        await self._respond_html(
             update,
-            "👋 Hi! I'm your Spyoncino control bot.\n" "Use /help to see the available commands.",
+            "🤖 <b>Security Bot Activated!</b>\n\n"
+            "I'm your AI-powered security assistant. I can monitor your space, "
+            "detect motion and people, and send you real-time alerts.\n\n"
+            "Use /help to see all available commands.",
         )
 
     async def _cmd_help(self, update: Any, context: Any) -> None:
         if not await self._ensure_command_allowed(update, context):
             return
-        await self._respond(
-            update,
-            (
-                "📋 Available commands:\n"
-                "/status - Show system health summary\n"
-                "/enable [camera_id] - Enable a camera\n"
-                "/disable [camera_id] - Disable a camera\n"
-                "/snapshot [camera_id] - Request a snapshot\n"
-                "/whoami - Display your Telegram user id\n"
-                "/setup <password> - Claim superuser access (first run)"
-            ),
+
+        # Format help similar to legacy bot
+        help_text = (
+            "🤖 <b>Security Bot Commands</b>\n\n"
+            "<b>👤 Identity Info:</b>\n"
+            "/whoami - Show your user info\n\n"
+            "<b>📊 System Control:</b>\n"
+            "/start - Welcome message\n"
+            "/status - Show system status\n"
+            "/stats - Detailed statistics\n"
+            "/start_monitor [camera_id] - Start monitoring\n"
+            "/stop_monitor [camera_id] - Stop monitoring\n\n"
+            "<b>📹 Recordings:</b>\n"
+            "/recordings [camera_id] - Browse recordings\n"
+            "/get &lt;index|name&gt; - Get specific recording\n"
+            "/snapshot [camera_id] - Live camera snapshot\n"
+            "/cleanup - Force cleanup old files\n\n"
+            "<b>📊 Analytics:</b>\n"
+            "/timeline [hours] - Event timeline plot\n"
+            "/analytics [hours] - Analytics summary\n\n"
+            "<b>⚙️ Configuration:</b>\n"
+            "/show_config - Current settings\n"
+            "/config &lt;key&gt; &lt;value&gt; - Change setting\n\n"
+            "<b>🔧 Debugging:</b>\n"
+            "/test - Test notification system\n\n"
+            "<b>👑 Admin Commands:</b>\n"
+            "/whitelist_add &lt;user_id&gt; - Add user to whitelist\n"
+            "/whitelist_remove &lt;user_id&gt; - Remove user\n"
+            "/whitelist_list - Show whitelisted users"
         )
+
+        await self._respond_html(update, help_text)
 
     async def _cmd_status(self, update: Any, context: Any) -> None:
         if not await self._ensure_command_allowed(update, context):
             return
         if not self._last_health:
-            await self._respond(update, "No health reports yet. Please try again shortly.")
+            await self._respond_html(update, "⚠️ No health reports yet. Please try again shortly.")
             return
-        lines = [f"System status: {self._last_health.status.upper()}"]
+
+        # Format status similar to legacy bot
+        status_icon = "✅" if self._last_health.status == "healthy" else "❌"
+        status_text = "🔍 <b>Security System Status</b>\n\n"
+        status_text += f"<b>System:</b> {status_icon} {self._last_health.status.upper()}\n\n"
+
+        # Group modules by category
+        capture_modules = []
+        detection_modules = []
+        other_modules = []
+
         for module, report in sorted(self._last_health.modules.items()):
-            lines.append(f"• {module}: {report.status}")
-        await self._respond(update, "\n".join(lines))
+            icon = "✅" if report.status == "healthy" else "❌"
+            module_line = f"{icon} {module}: {report.status}"
+
+            if "camera" in module.lower() or "capture" in module.lower():
+                capture_modules.append(module_line)
+            elif (
+                "detect" in module.lower() or "motion" in module.lower() or "yolo" in module.lower()
+            ):
+                detection_modules.append(module_line)
+            else:
+                other_modules.append(module_line)
+
+        if capture_modules:
+            status_text += "<b>📹 Capture:</b>\n"
+            status_text += "\n".join(f"• {m}" for m in capture_modules) + "\n\n"
+
+        if detection_modules:
+            status_text += "<b>🔍 Detection:</b>\n"
+            status_text += "\n".join(f"• {m}" for m in detection_modules) + "\n\n"
+
+        if other_modules:
+            status_text += "<b>📊 Other:</b>\n"
+            status_text += "\n".join(f"• {m}" for m in other_modules) + "\n\n"
+
+        # Add storage info if available
+        if self._last_storage:
+            status_text += "<b>💾 Storage:</b>\n"
+            status_text += f"• Usage: {self._last_storage.usage_percent:.1f}% ({self._last_storage.used_gb:.1f}GB / {self._last_storage.total_gb:.1f}GB)\n"
+
+        await self._respond_html(update, status_text)
 
     async def _cmd_stats(self, update: Any, context: Any) -> None:
         if not await self._ensure_command_allowed(update, context):
             return
-        lines = []
+
+        if not self._last_health and not self._last_storage:
+            await self._respond_html(update, "⚠️ No telemetry received yet. Please try again soon.")
+            return
+
+        # Format stats similar to legacy bot
+        stats_text = "📈 <b>Detailed Statistics</b>\n\n"
+
         if self._last_health:
-            lines.append(f"System status: {self._last_health.status.upper()}")
+            status_icon = "✅" if self._last_health.status == "healthy" else "❌"
+            stats_text += "<b>⏱️ Runtime:</b>\n"
+            stats_text += f"• Status: {status_icon} {self._last_health.status.upper()}\n\n"
+
+            # Count modules by status
+            healthy_count = sum(
+                1 for r in self._last_health.modules.values() if r.status == "healthy"
+            )
+            total_count = len(self._last_health.modules)
+            stats_text += "<b>📊 Modules:</b>\n"
+            stats_text += f"• Healthy: {healthy_count}/{total_count}\n\n"
+
         if self._last_storage:
             storage = self._last_storage
-            lines.append(
-                f"Storage: {storage.used_gb:.2f}GB / {storage.total_gb:.2f}GB "
-                f"({storage.usage_percent:.1f}% used)"
-            )
-        if not lines:
-            lines.append("No telemetry received yet. Please try again soon.")
-        await self._respond(update, "\n".join(lines))
+            stats_text += "<b>💾 Storage:</b>\n"
+            stats_text += f"• Total Space: {storage.total_gb:.1f} GB\n"
+            stats_text += f"• Used: {storage.used_gb:.1f} GB\n"
+            stats_text += f"• Free: {storage.free_gb:.1f} GB\n"
+            stats_text += f"• Usage: {storage.usage_percent:.1f}%\n"
+
+        await self._respond_html(update, stats_text)
 
     async def _cmd_enable(self, update: Any, context: Any) -> None:
         await self._handle_camera_state(update, context, enabled=True)
@@ -441,12 +556,26 @@ class TelegramControlBot(BaseModule):
             return
         camera_id = self._camera_from_context(context)
         if not camera_id:
-            await self._respond(update, "No camera id provided and no default camera configured.")
+            await self._respond_html(
+                update, "❌ No camera id provided and no default camera configured."
+            )
             return
+
+        # Generate request ID for correlating response
+        request_id = f"snap-{int(self._clock() * 1000)}-{len(self._snapshot_requests) + 1}"
+        chat = getattr(update, "effective_chat", None)
+        chat_id = getattr(chat, "id", None)
+        if chat_id is not None:
+            self._snapshot_requests[request_id] = {"chat_id": chat_id, "camera_id": camera_id}
+
         await self._publish_command(
-            ControlCommand(command="camera.snapshot", camera_id=camera_id, arguments={})
+            ControlCommand(
+                command="camera.snapshot", camera_id=camera_id, arguments={"request_id": request_id}
+            )
         )
-        await self._respond(update, f"Snapshot requested for camera `{camera_id}`.")
+        await self._respond_html(
+            update, f"📸 Requesting snapshot from camera <code>{camera_id}</code>..."
+        )
 
     async def _cmd_cleanup(self, update: Any, context: Any) -> None:
         if not await self._ensure_command_allowed(update, context):
@@ -503,10 +632,21 @@ class TelegramControlBot(BaseModule):
                 arguments={},
             )
         )
+        # Format response similar to legacy bot
         if camera_id:
-            await self._respond(update, f"Monitoring started for camera `{camera_id}`.")
+            await self._respond_html(
+                update,
+                f"▶️ <b>Monitoring started!</b>\n\n"
+                f"📹 <b>Active Camera:</b> {camera_id}\n\n"
+                f"I'll alert you when I detect motion or people.",
+            )
         else:
-            await self._respond(update, "Monitoring started for all cameras.")
+            await self._respond_html(
+                update,
+                "▶️ <b>Monitoring started!</b>\n\n"
+                "📹 <b>Active Cameras:</b> All cameras\n\n"
+                "I'll alert you when I detect motion or people.",
+            )
 
     async def _cmd_stop_monitor(self, update: Any, context: Any) -> None:
         if not await self._ensure_command_allowed(update, context):
@@ -520,10 +660,16 @@ class TelegramControlBot(BaseModule):
                 arguments={},
             )
         )
+        # Format response similar to legacy bot
         if camera_id:
-            await self._respond(update, f"Monitoring stopped for camera `{camera_id}`.")
+            await self._respond_html(
+                update,
+                f"⏹️ <b>Monitoring stopped.</b>\n\n" f"📹 <b>Disabled Camera:</b> {camera_id}",
+            )
         else:
-            await self._respond(update, "Monitoring stopped for all cameras.")
+            await self._respond_html(
+                update, "⏹️ <b>Monitoring stopped.</b>\n\n" "📹 <b>Disabled Cameras:</b> All cameras"
+            )
 
     async def _cmd_recordings(self, update: Any, context: Any) -> None:
         if not await self._ensure_command_allowed(update, context):
@@ -545,13 +691,13 @@ class TelegramControlBot(BaseModule):
             )
         )
         if camera_id:
-            await self._respond(
-                update, f"Requested recordings list for camera `{camera_id}` from dashboard."
+            await self._respond_html(
+                update,
+                f"📂 Requested recordings list for camera <code>{camera_id}</code>. Results will appear shortly.",
             )
         else:
-            await self._respond(
-                update,
-                "Requested global recordings list from dashboard. " "Results will appear shortly.",
+            await self._respond_html(
+                update, "📂 Requested recordings list. Results will appear shortly."
             )
 
     async def _cmd_get_recording(self, update: Any, context: Any) -> None:
@@ -593,20 +739,24 @@ class TelegramControlBot(BaseModule):
         # Show-config is a superuser-only, bot-local command for now.
         if not await self._ensure_superuser(update, context):
             return
+
+        # Format config similar to legacy bot with proper HTML escaping
         enabled_users = ", ".join(str(uid) for uid in sorted(self._user_whitelist)) or "none"
-        await self._respond(
-            update,
-            (
-                "Current Telegram control bot configuration:\n"
-                f"- default_camera_id: `{self._default_camera_id}`\n"
-                f"- command_topic: `{self._command_topic}`\n"
-                f"- allow_group_commands: `{self._allow_group_commands}`\n"
-                f"- silent_unauthorized: `{self._silent_unauthorized}`\n"
-                f"- command_rate_limit: `{self._command_rate_limit}` per {int(self._command_window_seconds)}s\n"
-                f"- superuser_id: `{self._superuser_id}`\n"
-                f"- whitelisted_users: {enabled_users}"
-            ),
+
+        config_text = (
+            "⚙️ <b>Current Configuration</b>\n\n"
+            "<b>🤖 Bot Settings:</b>\n"
+            f"• Default Camera: <code>{self._default_camera_id or 'None'}</code>\n"
+            f"• Command Topic: <code>{self._command_topic}</code>\n"
+            f"• Allow Group Commands: {'✅' if self._allow_group_commands else '❌'}\n"
+            f"• Silent Unauthorized: {'✅' if self._silent_unauthorized else '❌'}\n"
+            f"• Rate Limit: {self._command_rate_limit} per {int(self._command_window_seconds)}s\n\n"
+            "<b>👤 Access Control:</b>\n"
+            f"• Superuser ID: <code>{self._superuser_id or 'None'}</code>\n"
+            f"• Whitelisted Users: {enabled_users}"
         )
+
+        await self._respond_html(update, config_text)
 
     async def _cmd_config(self, update: Any, context: Any) -> None:
         # Configuration changes are treated as admin-only, forwarded as control commands.
@@ -653,16 +803,24 @@ class TelegramControlBot(BaseModule):
             try:
                 hours = max(1, min(168, int(args[0])))
             except ValueError:
-                await self._respond(update, "Invalid hours value. Using default (24h).")
+                await self._respond_html(update, "❌ Invalid hours value. Using default (24 hours)")
                 hours = 24
+
+        # Generate request ID for correlating response
+        request_id = f"timeline-{int(self._clock() * 1000)}-{len(self._timeline_requests) + 1}"
+        chat = getattr(update, "effective_chat", None)
+        chat_id = getattr(chat, "id", None)
+        if chat_id is not None:
+            self._timeline_requests[request_id] = {"chat_id": chat_id, "hours": hours}
+
         await self._publish_command(
             ControlCommand(
                 command="analytics.timeline",
                 camera_id=None,
-                arguments={"hours": hours},
+                arguments={"hours": hours, "request_id": request_id},
             )
         )
-        await self._respond(update, f"Requested analytics timeline for the last {hours} hours.")
+        await self._respond_html(update, f"📊 Generating timeline for last {hours} hours...")
 
     async def _cmd_analytics(self, update: Any, context: Any) -> None:
         if not await self._ensure_command_allowed(update, context):
@@ -673,16 +831,26 @@ class TelegramControlBot(BaseModule):
             try:
                 hours = max(1, min(168, int(args[0])))
             except ValueError:
-                await self._respond(update, "Invalid hours value. Using default (24h).")
+                await self._respond_html(update, "❌ Invalid hours value. Using default (24 hours)")
                 hours = 24
+
+        # Generate request ID for correlating response
+        request_id = f"analytics-{int(self._clock() * 1000)}-{len(self._analytics_requests) + 1}"
+        chat = getattr(update, "effective_chat", None)
+        chat_id = getattr(chat, "id", None)
+        if chat_id is not None:
+            self._analytics_requests[request_id] = {"chat_id": chat_id, "hours": hours}
+
         await self._publish_command(
             ControlCommand(
                 command="analytics.summary",
                 camera_id=None,
-                arguments={"hours": hours},
+                arguments={"hours": hours, "request_id": request_id},
             )
         )
-        await self._respond(update, f"Requested analytics summary for the last {hours} hours.")
+        await self._respond_html(
+            update, f"📊 Generating analytics summary for last {hours} hours..."
+        )
 
     async def _cmd_whitelist_add(self, update: Any, context: Any) -> None:
         if not await self._ensure_superuser(update, context):
@@ -844,6 +1012,16 @@ class TelegramControlBot(BaseModule):
         if chat and hasattr(chat, "send_message"):
             await chat.send_message(message, parse_mode="Markdown")
 
+    async def _respond_html(self, update: Any, message: str) -> None:
+        """Respond with HTML formatting (like legacy bot)."""
+        target = getattr(update, "message", None)
+        if target and hasattr(target, "reply_text"):
+            await target.reply_text(message, parse_mode="HTML")
+            return
+        chat = getattr(update, "effective_chat", None)
+        if chat and hasattr(chat, "send_message"):
+            await chat.send_message(message, parse_mode="HTML")
+
     async def _send_typing_indicator(self, update: Any, context: Any) -> None:
         if not self._send_typing_action:
             return
@@ -878,6 +1056,249 @@ class TelegramControlBot(BaseModule):
         chat = getattr(update, "effective_chat", None)
         chat_type = getattr(chat, "type", "")
         return str(chat_type).lower() in {"group", "supergroup"}
+
+    async def _handle_snapshot_result(self, topic: str, payload: Any) -> None:
+        """Handle snapshot result and send image to chat."""
+        # Extract request_id from payload (handle both dict and object)
+        if isinstance(payload, dict):
+            request_id = payload.get("request_id")
+        else:
+            request_id = getattr(payload, "request_id", None)
+
+        if not request_id or request_id not in self._snapshot_requests:
+            return
+
+        context = self._snapshot_requests.get(request_id)
+        if not context or self._application is None:
+            return
+
+        chat_id = context.get("chat_id")
+        if chat_id is None:
+            return
+
+        bot = getattr(self._application, "bot", None)
+        if bot is None:
+            return
+
+        # Try to get image data from payload (handle both dict and object)
+        image_data = None
+        image_path = None
+
+        if isinstance(payload, dict):
+            image_data = payload.get("image_data")
+            image_path = payload.get("path")
+        elif hasattr(payload, "image_data") and payload.image_data:
+            image_data = payload.image_data
+        elif hasattr(payload, "path"):
+            image_path = payload.path
+
+        if image_data:
+            import io
+            from datetime import datetime
+
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            caption = f"📸 <b>Live Snapshot</b>\n📅 {timestamp}"
+
+            try:
+                await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=io.BytesIO(image_data),
+                    caption=caption,
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.exception("Failed to send snapshot image data to chat %s", chat_id)
+                await bot.send_message(
+                    chat_id=chat_id, text=f"❌ Failed to send snapshot: {str(e)[:100]}"
+                )
+        elif image_path:
+            from pathlib import Path
+
+            path = Path(image_path)
+            if path.exists():
+                from datetime import datetime
+
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                caption = f"📸 <b>Live Snapshot</b>\n📅 {timestamp}"
+
+                try:
+                    with path.open("rb") as f:
+                        await bot.send_photo(
+                            chat_id=chat_id, photo=f, caption=caption, parse_mode="HTML"
+                        )
+                except Exception as e:
+                    logger.exception("Failed to send snapshot file to chat %s", chat_id)
+                    await bot.send_message(
+                        chat_id=chat_id, text=f"❌ Failed to send snapshot: {str(e)[:100]}"
+                    )
+            else:
+                await bot.send_message(chat_id=chat_id, text="❌ Snapshot file not found.")
+        else:
+            await bot.send_message(chat_id=chat_id, text="❌ No snapshot data received.")
+
+        # Clean up request
+        self._snapshot_requests.pop(request_id, None)
+
+    async def _handle_timeline_result(self, topic: str, payload: Any) -> None:
+        """Handle timeline plot result and send image to chat."""
+        # Extract request_id (handle both dict and object)
+        if isinstance(payload, dict):
+            request_id = payload.get("request_id")
+        else:
+            request_id = getattr(payload, "request_id", None)
+
+        if not request_id or request_id not in self._timeline_requests:
+            return
+
+        context = self._timeline_requests.get(request_id)
+        if not context or self._application is None:
+            return
+
+        chat_id = context.get("chat_id")
+        hours = context.get("hours", 24)
+        if chat_id is None:
+            return
+
+        bot = getattr(self._application, "bot", None)
+        if bot is None:
+            return
+
+        # Get plot data (handle both dict and object)
+        plot_data = None
+        if isinstance(payload, dict):
+            plot_data = payload.get("plot_data") or payload.get("image_data")
+            if not plot_data and payload.get("path"):
+                from pathlib import Path
+
+                path = Path(payload["path"])
+                if path.exists():
+                    plot_data = path.read_bytes()
+        elif hasattr(payload, "plot_data") and payload.plot_data:
+            plot_data = payload.plot_data
+        elif hasattr(payload, "image_data") and payload.image_data:
+            plot_data = payload.image_data
+        elif hasattr(payload, "path"):
+            from pathlib import Path
+
+            path = Path(payload.path)
+            if path.exists():
+                plot_data = path.read_bytes()
+
+        if plot_data and len(plot_data) > 0:
+            import io
+
+            caption = f"📈 <b>Security Timeline - Last {hours} Hours</b>"
+            plot_io = io.BytesIO(plot_data)
+            plot_io.name = "timeline.png"
+
+            try:
+                await bot.send_photo(
+                    chat_id=chat_id, photo=plot_io, caption=caption, parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.exception("Failed to send timeline plot to chat %s", chat_id)
+                await bot.send_message(
+                    chat_id=chat_id, text=f"❌ Failed to send timeline: {str(e)[:100]}"
+                )
+        else:
+            await bot.send_message(
+                chat_id=chat_id, text=f"❌ No timeline data available for the last {hours} hours."
+            )
+
+        # Clean up request
+        self._timeline_requests.pop(request_id, None)
+
+    async def _handle_analytics_result(self, topic: str, payload: Any) -> None:
+        """Handle analytics summary result and send formatted text to chat."""
+        # Extract request_id (handle both dict and object)
+        if isinstance(payload, dict):
+            request_id = payload.get("request_id")
+        else:
+            request_id = getattr(payload, "request_id", None)
+
+        if not request_id or request_id not in self._analytics_requests:
+            return
+
+        context = self._analytics_requests.get(request_id)
+        if not context or self._application is None:
+            return
+
+        chat_id = context.get("chat_id")
+        hours = context.get("hours", 24)
+        if chat_id is None:
+            return
+
+        bot = getattr(self._application, "bot", None)
+        if bot is None:
+            return
+
+        # Format analytics similar to legacy bot
+        try:
+            stats = {}
+            if hasattr(payload, "stats"):
+                stats = payload.stats
+            elif hasattr(payload, "data"):
+                stats = payload.data
+            elif isinstance(payload, dict):
+                stats = payload
+
+            if not stats:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ No analytics data available for the last {hours} hours.",
+                )
+                return
+
+            analytics_text = f"📊 <b>Analytics Summary - Last {hours} Hours</b>\n\n"
+            analytics_text += f"<b>Total Events:</b> {stats.get('total_events', 0)}\n\n"
+
+            if stats.get("by_type"):
+                analytics_text += "<b>🔍 By Event Type:</b>\n"
+                for event_type, count in sorted(stats["by_type"].items()):
+                    icon = {
+                        "motion": "👀",
+                        "person": "🚨",
+                        "disconnect": "⚠️",
+                        "reconnect": "✅",
+                        "error": "❌",
+                        "startup": "🟢",
+                        "shutdown": "🔴",
+                        "storage_warning": "💾",
+                    }.get(event_type, "•")
+                    analytics_text += f"  {icon} {event_type.title()}: {count}\n"
+                analytics_text += "\n"
+
+            if stats.get("by_severity"):
+                analytics_text += "<b>⚡ By Severity:</b>\n"
+                for severity, count in sorted(stats["by_severity"].items()):
+                    icon = {"info": "ℹ️", "warning": "⚠️", "error": "❌"}.get(severity, "•")
+                    analytics_text += f"  {icon} {severity.title()}: {count}\n"
+                analytics_text += "\n"
+
+            if stats.get("first_event") and stats.get("last_event"):
+                from datetime import datetime
+
+                first = stats["first_event"]
+                last = stats["last_event"]
+                if isinstance(first, str):
+                    first = datetime.fromisoformat(first.replace("Z", "+00:00"))
+                if isinstance(last, str):
+                    last = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                analytics_text += "<b>📅 Time Range:</b>\n"
+                analytics_text += f"  First: {first.strftime('%m/%d %H:%M')}\n"
+                analytics_text += f"  Last: {last.strftime('%m/%d %H:%M')}\n"
+            elif stats.get("total_events", 0) == 0:
+                analytics_text += "<i>No events recorded in this period.</i>\n"
+
+            await bot.send_message(chat_id=chat_id, text=analytics_text, parse_mode="HTML")
+        except Exception as e:
+            logger.exception("Failed to format/send analytics to chat %s", chat_id)
+            await bot.send_message(
+                chat_id=chat_id, text=f"❌ Failed to generate analytics: {str(e)[:100]}"
+            )
+
+        # Clean up request
+        self._analytics_requests.pop(request_id, None)
 
 
 __all__ = ["TelegramControlBot"]

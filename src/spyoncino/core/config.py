@@ -1127,6 +1127,31 @@ class ConfigSnapshot(BaseModel):
                 }
             )
 
+        def _command_handler_config() -> ModuleConfig:
+            """Default config for DashboardCommandHandler."""
+            return ModuleConfig(
+                options={
+                    "command_topic": "dashboard.control.command",
+                    "snapshot_result_topic": "dashboard.snapshot.result",
+                    "timeline_result_topic": "dashboard.timeline.result",
+                    "analytics_result_topic": "dashboard.analytics.result",
+                    "events_db_path": str(self.storage.path / "events.db"),
+                }
+            )
+
+        def _recordings_service_config() -> ModuleConfig:
+            """Default config for RecordingsService."""
+            # Use gifs directory for recordings (where GIFs are stored in modular system)
+            return ModuleConfig(
+                options={
+                    "command_topic": "dashboard.control.command",
+                    "list_result_topic": "dashboard.recordings.list.result",
+                    "get_result_topic": "dashboard.recordings.get.result",
+                    "events_root": str(self.storage.gif_dir),
+                    "default_limit": 20,
+                }
+            )
+
         builders: dict[str, Callable[[], list[ModuleConfig]]] = {
             "modules.input.camera_simulator": _camera_sim_config,
             "modules.input.usb_camera": _usb_camera_config,
@@ -1144,6 +1169,8 @@ class ConfigSnapshot(BaseModel):
             "modules.status.prometheus_exporter": _prometheus_exporter_config,
             "modules.status.resilience_tester": _resilience_tester_config,
             "modules.dashboard.control_api": _control_api_config,
+            "modules.dashboard.command_handler": _command_handler_config,
+            "modules.dashboard.recordings_service": _recordings_service_config,
             "modules.dashboard.telegram_bot": _telegram_control_bot_config,
             "modules.dashboard.websocket_gateway": _websocket_gateway_config,
             "modules.storage.retention": _storage_retention_config,

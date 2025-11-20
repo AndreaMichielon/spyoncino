@@ -203,6 +203,8 @@ class TelegramNotifier(BaseModule):
         self._last_notifications: dict[
             tuple[str, str], tuple[float, tuple[float, float, float, float] | None]
         ] = {}
+        # Deduplication window for suppressing motion when person detected
+        self._deduplication_window = 2.0  # 2 seconds
         # Lock to ensure atomic check-and-update for cooldown (async lock for async context)
         self._cooldown_lock: asyncio.Lock | None = None
 
@@ -309,6 +311,14 @@ class TelegramNotifier(BaseModule):
             # Use async lock to ensure atomic check-and-update
             if self._cooldown_lock:
                 async with self._cooldown_lock:
+                    # Check for duplicate suppression (motion vs person)
+                    if self._should_suppress_duplicate(camera_id, kind, current_time):
+                        logger.debug(
+                            "Suppressing %s notification for camera %s - duplicate with higher priority event",
+                            kind,
+                            camera_id,
+                        )
+                        return
                     if self._should_suppress_notification(camera_id, kind, bbox, current_time):
                         logger.debug(
                             "Suppressing %s notification for camera %s due to cooldown/overlap",
@@ -321,6 +331,13 @@ class TelegramNotifier(BaseModule):
                     self._update_last_notification(camera_id, kind, bbox, current_time)
             else:
                 # Fallback if lock not initialized (shouldn't happen in normal operation)
+                if self._should_suppress_duplicate(camera_id, kind, current_time):
+                    logger.debug(
+                        "Suppressing %s notification for camera %s - duplicate with higher priority event",
+                        kind,
+                        camera_id,
+                    )
+                    return
                 if self._should_suppress_notification(camera_id, kind, bbox, current_time):
                     logger.debug(
                         "Suppressing %s notification for camera %s due to cooldown/overlap",
@@ -667,6 +684,31 @@ class TelegramNotifier(BaseModule):
                     pass
         return None
 
+    def _should_suppress_duplicate(
+        self,
+        camera_id: str,
+        kind: str,
+        current_time: float,
+    ) -> bool:
+        """
+        Suppress motion notifications when person detection happens at the same time.
+        Person detections take priority over motion.
+        """
+        # If this is a motion notification (snapshot), check if person (gif) was recently detected
+        if kind == "snapshot":
+            person_key = (camera_id, "gif")
+            person_last = self._last_notifications.get(person_key)
+            if person_last:
+                person_time, _ = person_last
+                age = current_time - person_time
+                # Suppress motion if person was detected within deduplication window
+                if age < self._deduplication_window:
+                    return True
+
+        # If this is a person notification, suppress any recent motion notifications
+        # (This is handled by updating the person notification timestamp)
+        return False
+
     def _should_suppress_notification(
         self,
         camera_id: str,
@@ -703,6 +745,19 @@ class TelegramNotifier(BaseModule):
         """Update the last notification timestamp and bbox for the given camera/kind."""
         key = (camera_id, kind)
         self._last_notifications[key] = (current_time, bbox)
+
+        # If this is a person detection (gif), clear any recent motion notifications
+        # to prevent motion from being sent after person
+        if kind == "gif":
+            motion_key = (camera_id, "snapshot")
+            motion_last = self._last_notifications.get(motion_key)
+            if motion_last:
+                motion_time, _ = motion_last
+                # If motion was very recent (within deduplication window), clear it
+                if (current_time - motion_time) < self._deduplication_window:
+                    # Don't delete, but mark as suppressed by updating timestamp to match person
+                    # This ensures motion won't be sent if it arrives after person
+                    self._last_notifications[motion_key] = (current_time, None)
 
     def _iou(
         self,

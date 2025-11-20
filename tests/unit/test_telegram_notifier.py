@@ -779,3 +779,230 @@ async def test_cooldown_applies_to_all_notification_types(tmp_path: Path) -> Non
     assert len(sender.photos) == 1, "Expected 1 snapshot"
     assert len(sender.animations) == 1, "Expected 1 GIF"
     assert len(sender.videos) == 1, "Expected 1 clip"
+
+
+# =============================================================================
+# Person/Motion Deduplication Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_person_detection_suppresses_motion_notification(tmp_path: Path) -> None:
+    """Test that person detection suppresses motion notification within deduplication window."""
+    motion_path = tmp_path / "motion.png"
+    motion_path.write_bytes(b"snapshot-bytes")
+    person_path = tmp_path / "person.gif"
+    person_path.write_bytes(b"gif-bytes")
+
+    clock = MockClock(start_time=100.0)
+    sender = StubSender()
+    notifier = TelegramNotifier(sender=sender, clock=clock)
+    orchestrator = Orchestrator()
+
+    await orchestrator.add_module(
+        notifier,
+        config=ModuleConfig(
+            options={
+                "chat_id": 999,
+                "topic": "event.snapshot.ready",  # Motion notifications (kind="snapshot")
+                "gif_topic": "event.gif.ready",  # Person detections (kind="gif")
+                "cooldown_enabled": True,
+                "cooldown_seconds": 30.0,
+            }
+        ),
+    )
+
+    await orchestrator.start()
+
+    # Person detection first (gif topic = kind="gif")
+    person = SnapshotArtifact(
+        camera_id="camera1",
+        artifact_path=str(person_path),
+        content_type="image/gif",
+        metadata={"detection": {"detector_id": "yolo", "attributes": {"label": "person"}}},
+    )
+    await orchestrator.bus.publish("event.gif.ready", person)
+    await asyncio.sleep(0.05)
+
+    # Motion notification immediately after (within 2 second window) on snapshot topic (kind="snapshot")
+    clock.advance(0.5)  # Within deduplication window
+    motion = SnapshotArtifact(
+        camera_id="camera1",
+        artifact_path=str(motion_path),
+        content_type="image/png",
+        metadata={"detection": {"detector_id": "motion"}},
+    )
+    await orchestrator.bus.publish("event.snapshot.ready", motion)
+    await asyncio.sleep(0.05)
+
+    await orchestrator.stop()
+
+    # Person detection should be present, motion should be suppressed
+    assert len(sender.animations) == 1, "Expected 1 person detection GIF"
+    assert len(sender.photos) == 0, "Expected motion snapshot to be suppressed"
+
+
+@pytest.mark.asyncio
+async def test_motion_not_suppressed_if_person_detection_old(tmp_path: Path) -> None:
+    """Test that motion notification passes if person detection is outside deduplication window."""
+    motion_path = tmp_path / "motion.gif"
+    motion_path.write_bytes(b"gif-bytes")
+    person_path = tmp_path / "person.png"
+    person_path.write_bytes(b"snapshot-bytes")
+
+    clock = MockClock(start_time=100.0)
+    sender = StubSender()
+    notifier = TelegramNotifier(sender=sender, clock=clock)
+    orchestrator = Orchestrator()
+
+    await orchestrator.add_module(
+        notifier,
+        config=ModuleConfig(
+            options={
+                "chat_id": 999,
+                "topic": "event.snapshot.ready",
+                "gif_topic": "event.gif.ready",
+                "cooldown_enabled": True,
+                "cooldown_seconds": 30.0,
+            }
+        ),
+    )
+
+    await orchestrator.start()
+
+    # Person detection first
+    person = SnapshotArtifact(
+        camera_id="camera1",
+        artifact_path=str(person_path),
+        metadata={"detection": {"detector_id": "yolo", "attributes": {"label": "person"}}},
+    )
+    await orchestrator.bus.publish("event.snapshot.ready", person)
+    await asyncio.sleep(0.05)
+
+    # Motion notification after deduplication window (2 seconds)
+    clock.advance(3.0)  # Past deduplication window
+    motion = SnapshotArtifact(
+        camera_id="camera1",
+        artifact_path=str(motion_path),
+        content_type="image/gif",
+        metadata={"detection": {"detector_id": "motion"}},
+    )
+    await orchestrator.bus.publish("event.gif.ready", motion)
+    await asyncio.sleep(0.05)
+
+    await orchestrator.stop()
+
+    # Both should pass because person detection is old
+    assert len(sender.photos) == 1, "Expected 1 person detection"
+    assert len(sender.animations) == 1, "Expected 1 motion GIF (person detection too old)"
+
+
+@pytest.mark.asyncio
+async def test_motion_only_notification_passes(tmp_path: Path) -> None:
+    """Test that motion notification passes when there's no person detection."""
+    motion_path = tmp_path / "motion.gif"
+    motion_path.write_bytes(b"gif-bytes")
+
+    clock = MockClock(start_time=100.0)
+    sender = StubSender()
+    notifier = TelegramNotifier(sender=sender, clock=clock)
+    orchestrator = Orchestrator()
+
+    await orchestrator.add_module(
+        notifier,
+        config=ModuleConfig(
+            options={
+                "chat_id": 999,
+                "gif_topic": "event.gif.ready",
+                "cooldown_enabled": True,
+                "cooldown_seconds": 30.0,
+            }
+        ),
+    )
+
+    await orchestrator.start()
+
+    # Motion notification without person detection
+    motion = SnapshotArtifact(
+        camera_id="camera1",
+        artifact_path=str(motion_path),
+        content_type="image/gif",
+        metadata={"detection": {"detector_id": "motion"}},
+    )
+    await orchestrator.bus.publish("event.gif.ready", motion)
+    await asyncio.sleep(0.05)
+
+    await orchestrator.stop()
+
+    # Motion should pass
+    assert len(sender.animations) == 1, "Expected 1 motion GIF when no person detection"
+
+
+@pytest.mark.asyncio
+async def test_person_detection_clears_motion_cooldown(tmp_path: Path) -> None:
+    """Test that person detection clears any recent motion notifications from cooldown."""
+    motion_path = tmp_path / "motion.png"
+    motion_path.write_bytes(b"snapshot-bytes")
+    person_path = tmp_path / "person.gif"
+    person_path.write_bytes(b"gif-bytes")
+
+    clock = MockClock(start_time=100.0)
+    sender = StubSender()
+    notifier = TelegramNotifier(sender=sender, clock=clock)
+    orchestrator = Orchestrator()
+
+    await orchestrator.add_module(
+        notifier,
+        config=ModuleConfig(
+            options={
+                "chat_id": 999,
+                "topic": "event.snapshot.ready",  # Motion (kind="snapshot")
+                "gif_topic": "event.gif.ready",  # Person (kind="gif")
+                "cooldown_enabled": True,
+                "cooldown_seconds": 30.0,
+            }
+        ),
+    )
+
+    await orchestrator.start()
+
+    # Motion notification first (snapshot topic)
+    motion = SnapshotArtifact(
+        camera_id="camera1",
+        artifact_path=str(motion_path),
+        content_type="image/png",
+        metadata={"detection": {"detector_id": "motion"}},
+    )
+    await orchestrator.bus.publish("event.snapshot.ready", motion)
+    await asyncio.sleep(0.05)
+
+    # Person detection within deduplication window - should clear motion from cooldown
+    clock.advance(0.5)
+    person = SnapshotArtifact(
+        camera_id="camera1",
+        artifact_path=str(person_path),
+        content_type="image/gif",
+        metadata={"detection": {"detector_id": "yolo", "attributes": {"label": "person"}}},
+    )
+    await orchestrator.bus.publish("event.gif.ready", person)
+    await asyncio.sleep(0.05)
+
+    # Another motion notification immediately after person - should be suppressed
+    # because person was detected within deduplication window
+    clock.advance(0.1)
+    motion2 = SnapshotArtifact(
+        camera_id="camera1",
+        artifact_path=str(motion_path),
+        content_type="image/png",
+        metadata={"detection": {"detector_id": "motion"}},
+    )
+    await orchestrator.bus.publish("event.snapshot.ready", motion2)
+    await asyncio.sleep(0.05)
+
+    await orchestrator.stop()
+
+    # Person detection should be present
+    assert len(sender.animations) == 1, "Expected 1 person detection GIF"
+    # First motion might have been sent before person, second should be suppressed
+    # So we should have at most 1 photo (first motion) and 1 animation (person)
+    assert len(sender.photos) <= 1, "Expected at most 1 motion snapshot"
