@@ -1,0 +1,171 @@
+# =============================================================================
+# SPYONCINO RECIPE CONFIGURATION
+# =============================================================================
+# This recipe defines the complete configuration for the security system.
+# It specifies inputs (cameras), preprocessing (motion detection),
+# inference (object detection), optional post-processing, and interfaces.
+
+# =============================================================================
+# MAIN CONFIGURATION
+# =============================================================================
+patrol_time: 15.0  # Time between patrol cycles in seconds
+
+# Runtime data anchor: if you omit this key, it still defaults to "data" (see spyoncino.recipe_paths).
+# Relative paths for sqlite, media, weights, and face gallery resolve under this folder — except
+# secrets_path (cwd-relative, e.g. data/config/secrets.yaml). Use data_root: null for the old flat layout.
+# Layout with default or data_root: "data":
+#   data/spyoncino.db
+#   data/media/
+#   data/config/            (recipe, secrets, optional config.yaml samples)
+#   data/weights/yolov8n.pt  (auto-download or copy from repo-root yolov8n.pt on first run)
+#   data/face_gallery/       (gallery_path: "data/face_gallery" strips duplicate "data/")
+data_root: "data"
+
+sqlite_path: "spyoncino.db"       # -> data/spyoncino.db (under data_root)
+
+secrets_path: "data/config/secrets.yaml"  # Cwd-relative; not joined with data_root
+
+# =============================================================================
+# MEDIA STORE (disk) — separate from camera RAM buffers (memory_seconds on inputs)
+# =============================================================================
+media:
+  root: "media"                    # -> data/media/ with default data_root
+  retention_days: 14               # Delete indexed files older than this (0 = disable age purge)
+  max_total_mb: 2048               # Optional ceiling for total stored media (0 = disable)
+  max_files_per_camera: 500        # Optional per-camera file cap (0 = disable)
+  retention_every_n_cycles: 120    # How often the orchestrator runs retention (0 = never)
+
+# SQLite: events table + metrics snapshots (analytics, timeline). Independent from media files above.
+event_log:
+  retention_days: 3                 # Delete rows older than this (0 = disable)
+  retention_every_n_cycles: 120     # How often to prune (0 = never); defaults like media if omitted
+
+# =============================================================================
+# INPUTS - Camera Sources
+# =============================================================================
+inputs:
+  - name: "camera_1"
+    class: "camera"
+    params:
+      cam_id: "camera_1"
+      type: "usb"  # or "rtsp", "ip"
+      source: 0  # Camera index for USB, or URL for RTSP/IP
+      memory_seconds: 3  # Buffer duration in seconds
+
+  - name: "camera_2"
+    class: "camera"
+    params:
+      cam_id: "camera_2"
+      type: "usb"  # or "rtsp", "ip"
+      source: 1 # Camera index for USB, or URL for RTSP/IP
+      memory_seconds: 3  # Buffer duration in seconds
+
+  # Example RTSP camera:
+  # - name: "camera_2"
+  #   class: "camera"
+  #   params:
+  #     cam_id: "camera_2"
+  #     type: "rtsp"
+  #     source: "rtsp://username:password@192.168.1.100:554/stream"
+  #     memory_seconds: 3
+
+# =============================================================================
+# PREPROCESSING - Motion Detection
+# =============================================================================
+preproc:
+  - name: "motion_detector"
+    class: "motion"
+    params:
+      threshold: 10  # Motion detection threshold (0-100)
+
+# =============================================================================
+# INFERENCE - Object Detection
+# =============================================================================
+inference:
+  - name: "person_detector"
+    class: "detector"
+    params:
+      # Under data_root: default ``data/weights/yolov8n.pt`` — missing files are downloaded or copied from cwd
+      weights: "weights/yolov8n.pt"
+      conf_threshold: 0.25  # Confidence threshold (0.0-1.0)
+      iou_threshold: 0.6  # IoU threshold for NMS
+      batch_size: 16  # Batch size for inference
+      alarmed_classes: ["person"]  # Classes that trigger alarms
+
+# =============================================================================
+# POST-PROCESSING (optional; runs in the procedure phase before result assembly)
+# =============================================================================
+# Recipe key stays "postproc" (list of steps). Outputs land in result["face"].
+# Install optional extra: pip install spyoncino[face]  (see docs/face-recognition.md)
+postproc:
+  - name: "face_identification"
+    class: "face_identification"
+    params:
+      enabled: true
+      gallery_path: "data/face_gallery"   # Effective: <data_root>/face_gallery when data_root is "data"
+      # Face *detection* (DeepFace): ssd is a good default—better than opencv, lighter than mtcnn/retinaface.
+      # If ssd fails to import, try opencv. For max accuracy (needs TensorFlow stack): retinaface
+      detector_backend: "ssd"
+      model_name: "Facenet"
+      align: true
+      distance_metric: "cosine"
+      # Gallery *match* (cosine): lower = stricter. Raise slightly if same person often "unknown".
+      match_threshold: 0.35
+      # Champion frame: area = frame with largest person box (often more face pixels). Alternatives: combined, confidence
+      champion_frame_policy: "area"
+      recognition_cooldown_seconds_per_identity: 600
+      unknown_prompt_cooldown_seconds: 120
+      pending_ttl_days: 14
+      max_exemplars_per_identity: 30
+
+# =============================================================================
+# INTERFACES - Notification and Access Systems
+# =============================================================================
+interfaces:
+  # Web Application Interface — start before Telegram so /api/* is up for the bot (step 5 HTTP API).
+  - name: "web"
+    class: "webapp"
+    params:
+      memory_manager: null
+      # Uses authentication from secrets.yaml (same section as Telegram):
+      # authentication.setup_password, authentication.superuser_id, authentication.user_whitelist
+      host: "0.0.0.0"
+      port: 8000
+      # Optional: set api_key to require X-API-Key on /api/status, /api/media, /api/control/*
+      # Optional: set require_user_auth=true to also require X-User-Id and whitelist/superuser auth.
+      config: {}
+      # config:
+      #   api_key: "change-me"   # prefer secrets.yaml spyoncino_api.api_key + same value here
+      #   require_user_auth: true
+
+  # Telegram Bot Interface — /status, /pause, /snap use HTTP when api_base_url is set below.
+  - name: "telegram_bot"
+    class: "telegram"
+    params:
+      memory_manager: null
+      config:
+        # Base URL of the FastAPI app above (same process: 127.0.0.1 avoids Windows firewall quirks).
+        api_base_url: "http://127.0.0.1:8000"
+        notify_on_preproc: ["text"]
+        notify_on_detection: ["gif"]
+        # Face alerts (known/unknown) are driven by the face pipeline; no separate notify_on_face here.
+        gif:
+          fps: 10
+          duration: 3
+        video:
+          fps: 10
+          duration: 3
+          format: mp4
+        max_file_size_mb: 50.0
+        notification_rate_limit: 3
+        outbound_strategy: normal
+
+# =============================================================================
+# NOTES
+# =============================================================================
+# - class: use a short alias (camera, motion, detector, telegram, webapp, face_identification)
+#   or a dotted import path under the orchestrator path (e.g. input.cam_grabber.CamGrabber).
+# - memory_manager parameter will be automatically injected by the orchestrator
+# - Telegram bot credentials are loaded from data/config/secrets.yaml (gitignored)
+# - Web app will be accessible at http://localhost:8000 (or configured host:port)
+# - Recipe supports multiple cameras, but each should have a unique cam_id

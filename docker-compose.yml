@@ -1,0 +1,15 @@
+# Spyoncino — bind-mount repo `data/` (recipe, secrets, DB, media, weights).
+# USB cameras: on Linux you may need extra `devices`, `privileged`, or host networking; see docs/ops.md.
+services:
+  spyoncino:
+    build: .
+    image: spyoncino:local
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    environment:
+      # Optional; Telegram and auth are usually in data/config/secrets.yaml
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}

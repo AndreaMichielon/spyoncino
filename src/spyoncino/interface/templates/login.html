@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Spyoncino Dashboard Login</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+{{FAV}}    <style>
+{{SHARED_CSS}}
+        .login-wrap {
+            min-height: 100vh;
+            min-height: 100dvh;
+            display: grid;
+            place-items: center;
+            padding: var(--space-4);
+            padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+        }
+        .login-card {
+            width: min(420px, 100%);
+            padding: var(--space-6);
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            margin-bottom: var(--space-5);
+        }
+        .brand img {
+            width: 28px;
+            height: 28px;
+        }
+        .brand h1 {
+            margin: 0;
+            font-size: 1.15rem;
+            font-weight: 650;
+            letter-spacing: 0.01em;
+        }
+        .login-fields {
+            display: grid;
+            gap: var(--space-3);
+        }
+        .login-field label {
+            display: block;
+            margin: 0 0 var(--space-2);
+            color: var(--text-1);
+            font-size: 0.88rem;
+            font-weight: 600;
+        }
+        .login-field .input {
+            display: block;
+        }
+        .err {
+            min-height: 22px;
+            margin: 0 0 var(--space-3);
+            color: var(--danger);
+            font-size: 0.9rem;
+        }
+        .login-actions {
+            margin-top: var(--space-1);
+        }
+        .login-actions .btn {
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-wrap">
+      <div class="login-card card">
+        <div class="brand">
+            <img src="/static/logo.png" alt="Spyoncino logo">
+            <h1>Spyoncino Dashboard Login</h1>
+        </div>
+        <div class="login-fields">
+          <div class="login-field">
+            <label for="username">Username</label>
+            <input class="input" id="username" type="text" autocomplete="username" />
+          </div>
+          <div class="login-field">
+            <label for="password">Password</label>
+            <input class="input" id="password" type="password" autocomplete="current-password" />
+          </div>
+        </div>
+        <div class="err" id="err" aria-live="polite"></div>
+        <div class="login-actions">
+            <button class="btn btn-primary" id="loginBtn" type="button">Sign in</button>
+        </div>
+      </div>
+    </div>
+    <script>
+        async function doLogin() {
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            const err = document.getElementById('err');
+            err.textContent = '';
+            try {
+                const response = await fetch('/api/auth/dashboard/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username, password})
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    err.textContent = data.detail || 'Login failed';
+                    return;
+                }
+                window.location.href = '/';
+            } catch (e) {
+                err.textContent = 'Cannot reach server';
+            }
+        }
+        document.getElementById('loginBtn').addEventListener('click', doLogin);
+        function onEnter(e) {
+            if (e.key === 'Enter') doLogin();
+        }
+        document.getElementById('username').addEventListener('keydown', onEnter);
+        document.getElementById('password').addEventListener('keydown', onEnter);
+    </script>
+</body>
+</html>

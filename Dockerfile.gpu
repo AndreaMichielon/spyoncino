@@ -1,0 +1,49 @@
+# Spyoncino — NVIDIA GPU inference (CUDA). Runtime: host needs NVIDIA driver + `docker run --gpus all` (or Compose).
+# Same layout as Dockerfile: mount `data/` with recipe + secrets.
+#
+# PyTorch CUDA wheels target cu124; use an NVIDIA base with a compatible driver (CUDA 12.x runtime).
+# NVIDIA tags use `cudnn-runtime`, not `cudnn9-runtime` (cuDNN major version is not in the tag name).
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    curl \
+    ffmpeg \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 \
+    && python3.12 -m pip install --upgrade pip
+
+WORKDIR /app
+
+# PyTorch with CUDA 12.4 (Ultralytics/YOLO); install before spyoncino so deps resolve consistently.
+RUN python3.12 -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+
+COPY pyproject.toml README.md LICENSE ./
+COPY src ./src
+
+RUN python3.12 -m pip install .
+
+VOLUME ["/app/data"]
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8000/health || exit 1
+
+CMD ["spyoncino", "data/config/recipe.yaml"]

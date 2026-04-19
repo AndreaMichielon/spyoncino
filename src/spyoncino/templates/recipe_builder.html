@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Spyoncino Recipe Builder</title>
+{{FAV}}
+    <style>
+{{SHARED_CSS}}
+        body { padding: var(--space-5); }
+        .container { max-width: 1220px; margin: 0 auto; display: grid; gap: var(--space-4); }
+        .card { padding: var(--space-4); }
+        h1 { margin: 0; font-size: 1.3rem; }
+        h2 { margin: 0 0 var(--space-3); font-size: 1rem; }
+        h3 { margin: 0 0 var(--space-2); font-size: 0.92rem; color: var(--text-1); }
+        .sub { margin: var(--space-2) 0 0; color: var(--text-muted); font-size: 0.9rem; }
+        .grid { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
+        .manual-add-grid {
+            align-items: end;
+        }
+        .grid-tight { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+        .section-split { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+        .group {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: var(--space-3);
+            background: rgba(255,255,255,0.01);
+        }
+        .field {
+            min-width: 0;
+        }
+        .field label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            line-height: 1.4;
+            word-wrap: break-word;
+            overflow-wrap: anywhere;
+        }
+        .checks { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+        .checks label { display: inline-flex; gap: 8px; align-items: center; }
+        .status { min-height: 1.2em; color: var(--text-muted); font-size: 0.9rem; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th, td { border-bottom: 1px solid var(--border); padding: 8px; text-align: left; }
+        .mono { font-family: ui-monospace, Consolas, monospace; word-break: break-all; font-size: 0.82rem; }
+        .row { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+        .actions-row { gap: var(--space-3); margin-top: var(--space-3); }
+        .page-header { margin-bottom: var(--space-4); padding-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
+        .page-header h1 { font-size: 1.35rem; letter-spacing: -0.02em; }
+        .page-header .sub { margin-top: var(--space-2); max-width: 40rem; }
+        .card > h2 { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+        .card .h2-num { color: var(--text-muted); font-weight: 600; font-size: 0.85em; }
+        .mode-bootstrap #fieldSetDefault { display: none; }
+        /* Pipeline: balanced 2×2 on tablet+, single column on narrow screens */
+        .pipeline-toggles {
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--space-3) var(--space-4);
+            padding: var(--space-3) var(--space-4);
+            margin-top: var(--space-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: rgba(255, 255, 255, 0.02);
+        }
+        .pipeline-toggles label { font-size: 0.9rem; }
+        .pipeline-grid {
+            display: grid;
+            gap: var(--space-4);
+            grid-template-columns: 1fr;
+            margin-top: var(--space-4);
+        }
+        @media (min-width: 720px) {
+            .pipeline-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                align-items: start;
+            }
+        }
+        .pipeline-grid .group {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-2);
+        }
+        .pipeline-grid .group > h3 {
+            flex-shrink: 0;
+            margin: 0 0 var(--space-2);
+            padding-bottom: var(--space-2);
+            border-bottom: 1px solid var(--border);
+            font-size: 0.95rem;
+            letter-spacing: 0.01em;
+        }
+        /* One field per row so long labels never squeeze beside each other */
+        .pipeline-grid .grid-tight {
+            display: grid;
+            gap: var(--space-3);
+            grid-template-columns: minmax(0, 1fr);
+        }
+        .pipeline-grid .field {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+        }
+    </style>
+{{BOOTSTRAP_SCRIPT}}
+</head>
+<body class="{{BODY_CLASS}}">
+<div class="container">
+    <header class="page-header">
+        <h1>Recipe builder</h1>
+        <p class="sub">{{INTRO_SUB}}</p>
+    </header>
+
+    <div class="card">
+        <h2><span class="h2-num">1</span> Cameras</h2>
+        <div class="group" style="margin-bottom: var(--space-4);">
+            <h3>Manual</h3>
+            <div class="grid manual-add-grid">
+                <div class="field"><label for="manualCamId">cam_id</label><input id="manualCamId" class="input" type="text" placeholder="front_door" autocomplete="off"></div>
+                <div class="field"><label for="manualSourceType">type</label>
+                    <select id="manualSourceType" class="input">
+                        <option value="usb">usb</option>
+                        <option value="rtsp" selected>rtsp</option>
+                        <option value="ip">ip</option>
+                    </select>
+                </div>
+                <div class="field" style="grid-column: span 2; min-width: 220px;"><label for="manualSourceValue">source</label><input id="manualSourceValue" class="input mono" type="text" placeholder="rtsp://user:pass@192.168.1.10/stream or USB index" autocomplete="off"></div>
+                <div class="field"><label for="manualMem">memory_seconds</label><input id="manualMem" class="input" type="number" min="1" max="120" value="3"></div>
+                <div class="field">
+                    <label class="sub" style="display:block;margin-bottom:6px;">&nbsp;</label>
+                    <button type="button" class="btn btn-secondary" id="btnAddManual">Add camera</button>
+                </div>
+            </div>
+        </div>
+        <h3 style="margin: 0 0 var(--space-2); font-size: 0.92rem; color: var(--text-1);">Discovery</h3>
+        <div class="checks">
+            <label><input type="checkbox" id="dUsb" checked> USB</label>
+            <label><input type="checkbox" id="dNet"> RTSP network</label>
+        </div>
+        <div class="grid" style="margin-top: var(--space-3);">
+            <div class="field"><label for="dHosts">Hosts (optional)</label><textarea id="dHosts" class="input" rows="2" placeholder="192.168.1.10"></textarea></div>
+            <div class="field"><label for="dUser">RTSP user</label><input id="dUser" class="input" type="text"></div>
+            <div class="field"><label for="dPass">RTSP password</label><input id="dPass" class="input" type="password"></div>
+            <div class="field"><label for="dMem">memory_seconds</label><input id="dMem" class="input" type="number" min="1" max="120" value="3"></div>
+        </div>
+        <div class="row" style="margin-top: var(--space-3);">
+            <button class="btn btn-primary" id="btnDiscover" type="button">Run discovery</button>
+            <span class="status" id="discoverStatus"></span>
+        </div>
+        <div style="margin-top: var(--space-3); overflow:auto;">
+            <table>
+                <thead><tr><th>Use</th><th>cam_id</th><th>type</th><th>source</th><th>preview</th><th></th></tr></thead>
+                <tbody id="cameraRows"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2><span class="h2-num">2</span> Runtime</h2>
+        <div class="section-split">
+            <div class="group">
+                <h3>Recipe &amp; web</h3>
+                <div class="grid-tight">
+                    <div class="field"><label for="recipeName">Recipe name</label><input id="recipeName" class="input" value="home"></div>
+                    <div class="field" id="fieldSetDefault"><label for="setDefault">Default recipe</label><input id="setDefault" type="checkbox" checked> <code>recipe.yaml</code></div>
+                    <div class="field"><label for="patrolTime">patrol_time</label><input id="patrolTime" class="input" type="number" min="0.2" max="3600" step="0.1" value="15"></div>
+                    <div class="field"><label for="webHost">Web app host</label><input id="webHost" class="input" value="127.0.0.1" title="Use 0.0.0.0 only if you need LAN access; narrower binding is safer."></div>
+                    <div class="field"><label for="webPort">Web app port</label><input id="webPort" class="input" type="number" min="1" max="65535" value="8000"></div>
+                </div>
+            </div>
+            <div class="group">
+                <h3>Paths</h3>
+                <div class="grid-tight">
+                    <div class="field"><label for="dataRoot">data_root</label><input id="dataRoot" class="input" value="data"></div>
+                    <div class="field"><label for="sqlitePath">sqlite_path</label><input id="sqlitePath" class="input" value="spyoncino.db"></div>
+                    <div class="field"><label for="secretsPath">secrets_path</label><input id="secretsPath" class="input" value="data/config/secrets.yaml"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2><span class="h2-num">3</span> Pipeline</h2>
+        <div class="checks pipeline-toggles">
+            <label><input type="checkbox" id="useMotion" checked> Motion preproc</label>
+            <label><input type="checkbox" id="useDetector" checked> Person detector</label>
+            <label><input type="checkbox" id="useFaceIdentification"> Face identification</label>
+            <label><input type="checkbox" id="enableTelegram"> Telegram</label>
+        </div>
+        <div class="pipeline-grid">
+            <div class="group">
+                <h3>Detection</h3>
+                <div class="grid-tight">
+                    <div class="field"><label for="motionThreshold">Motion threshold</label><input id="motionThreshold" class="input" type="number" min="1" max="100" value="10"></div>
+                    <div class="field"><label for="weights">Detector weights</label><input id="weights" class="input" value="weights/yolov8n.pt"></div>
+                    <div class="field"><label for="confThreshold">conf_threshold</label><input id="confThreshold" class="input" type="number" min="0.01" max="1" step="0.01" value="0.25"></div>
+                    <div class="field"><label for="iouThreshold">iou_threshold</label><input id="iouThreshold" class="input" type="number" min="0.01" max="1" step="0.01" value="0.6"></div>
+                </div>
+            </div>
+            <div class="group">
+                <h3>Storage Retention</h3>
+                <div class="grid-tight">
+                    <div class="field"><label for="mediaRoot">media.root</label><input id="mediaRoot" class="input" value="media"></div>
+                    <div class="field"><label for="mediaRetentionDays">media.retention_days</label><input id="mediaRetentionDays" class="input" type="number" min="0" max="3650" value="14"></div>
+                    <div class="field"><label for="mediaMaxTotalMb">media.max_total_mb</label><input id="mediaMaxTotalMb" class="input" type="number" min="0" step="1" value="2048"></div>
+                    <div class="field"><label for="mediaMaxFilesPerCamera">media.max_files_per_camera</label><input id="mediaMaxFilesPerCamera" class="input" type="number" min="0" value="500"></div>
+                    <div class="field"><label for="mediaRetentionEvery">media.retention_every_n_cycles</label><input id="mediaRetentionEvery" class="input" type="number" min="0" value="120"></div>
+                    <div class="field"><label for="eventRetentionDays">event_log.retention_days</label><input id="eventRetentionDays" class="input" type="number" min="0" value="3"></div>
+                    <div class="field"><label for="eventRetentionEvery">event_log.retention_every_n_cycles</label><input id="eventRetentionEvery" class="input" type="number" min="0" value="120"></div>
+                </div>
+            </div>
+            <div class="group">
+                <h3>Face Identification</h3>
+                <div class="grid-tight">
+                    <div class="field"><label for="faceGalleryPath">face.gallery_path</label><input id="faceGalleryPath" class="input" value="data/face_gallery"></div>
+                    <div class="field"><label for="faceDetectorBackend">face.detector_backend</label><input id="faceDetectorBackend" class="input" value="ssd"></div>
+                    <div class="field"><label for="faceModelName">face.model_name</label><input id="faceModelName" class="input" value="Facenet"></div>
+                    <div class="field"><label for="faceDistanceMetric">face.distance_metric</label><input id="faceDistanceMetric" class="input" value="cosine"></div>
+                    <div class="field"><label for="faceMatchThreshold">face.match_threshold</label><input id="faceMatchThreshold" class="input" type="number" min="0" max="2" step="0.01" value="0.35"></div>
+                    <div class="field"><label for="faceChampionPolicy">face.champion_frame_policy</label><input id="faceChampionPolicy" class="input" value="area"></div>
+                    <div class="field"><label for="faceRecCooldown">face.recognition_cooldown_seconds_per_identity</label><input id="faceRecCooldown" class="input" type="number" min="0" max="86400" value="600"></div>
+                    <div class="field"><label for="faceUnknownCooldown">face.unknown_prompt_cooldown_seconds</label><input id="faceUnknownCooldown" class="input" type="number" min="0" max="86400" value="120"></div>
+                    <div class="field"><label for="facePendingTtl">face.pending_ttl_days</label><input id="facePendingTtl" class="input" type="number" min="0" max="3650" value="14"></div>
+                    <div class="field"><label for="faceMaxExemplars">face.max_exemplars_per_identity</label><input id="faceMaxExemplars" class="input" type="number" min="1" max="1000" value="30"></div>
+                    <div class="field"><label for="faceAlign">face.align</label><input id="faceAlign" type="checkbox" checked></div>
+                </div>
+            </div>
+            <div class="group">
+                <h3>Telegram</h3>
+                <div class="grid-tight">
+                    <div class="field"><label for="tgBase">telegram.api_base_url</label><input id="tgBase" class="input" value="http://127.0.0.1:8000"></div>
+                    <div class="field"><label for="tgRate">telegram.notification_rate_limit</label><input id="tgRate" class="input" type="number" min="1" max="120" value="3"></div>
+                    <div class="field"><label for="tgStrategy">telegram.outbound_strategy</label><input id="tgStrategy" class="input" value="normal"></div>
+                    <div class="field"><label for="tgGifFps">telegram.gif.fps</label><input id="tgGifFps" class="input" type="number" min="1" max="60" value="10"></div>
+                    <div class="field"><label for="tgGifDuration">telegram.gif.duration</label><input id="tgGifDuration" class="input" type="number" min="1" max="60" value="3"></div>
+                    <div class="field"><label for="tgVideoFps">telegram.video.fps</label><input id="tgVideoFps" class="input" type="number" min="1" max="60" value="10"></div>
+                    <div class="field"><label for="tgVideoDuration">telegram.video.duration</label><input id="tgVideoDuration" class="input" type="number" min="1" max="60" value="3"></div>
+                    <div class="field"><label for="tgVideoFormat">telegram.video.format</label><input id="tgVideoFormat" class="input" value="mp4"></div>
+                    <div class="field"><label for="tgMaxFileSize">telegram.max_file_size_mb</label><input id="tgMaxFileSize" class="input" type="number" min="1" max="2000" value="50"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2><span class="h2-num">4</span> {{SECTION4_HEADING}}</h2>
+{{PRIMARY_ACTIONS}}
+        <p class="status" id="saveStatus"></p>
+    </div>
+</div>
+
+<script>
+(function(){
+  const cameraRows = document.getElementById('cameraRows');
+  const discoverStatus = document.getElementById('discoverStatus');
+  const saveStatus = document.getElementById('saveStatus');
+  const cameras = [];
+
+  function escAttr(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;');
+  }
+
+  function escText(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;');
+  }
+
+  /** Same physical source (type + value), ignoring cam_id — blocks manual vs discovery dupes. */
+  function normalizedSourceValue(c) {
+    const t = c.source_type;
+    const v = String(c.source_value == null ? '' : c.source_value).trim();
+    if (t === 'usb' && /^\d+$/.test(v)) {
+      return String(parseInt(v, 10));
+    }
+    return v;
+  }
+
+  function sourceIdentityKey(c) {
+    return c.source_type + '|' + normalizedSourceValue(c);
+  }
+
+  function camIdNormalized(c) {
+    return String(c.cam_id == null ? '' : c.cam_id).trim();
+  }
+
+  /** Returns null if row i conflicts with another row (cam_id or source). */
+  function rowConflictsWithOthers(i) {
+    const c = cameras[i];
+    const cid = camIdNormalized(c);
+    const sk = sourceIdentityKey(c);
+    for (let j = 0; j < cameras.length; j += 1) {
+      if (j === i) continue;
+      if (cid && camIdNormalized(cameras[j]) === cid) return 'cam_id';
+      if (sourceIdentityKey(cameras[j]) === sk) return 'source';
+    }
+    return null;
+  }
+
+  function tryAddCameraRow(row) {
+    const cid = camIdNormalized(row);
+    if (!cid) {
+      return { ok: false, reason: 'empty_id' };
+    }
+    if (cameras.some(function (x) { return camIdNormalized(x) === cid; })) {
+      return { ok: false, reason: 'cam_id' };
+    }
+    const sk = sourceIdentityKey(row);
+    if (cameras.some(function (x) { return sourceIdentityKey(x) === sk; })) {
+      return { ok: false, reason: 'source' };
+    }
+    cameras.push(row);
+    renderCameraRows();
+    return { ok: true };
+  }
+
+  function uniquifyCamId(base) {
+    let id = String(base || '').trim();
+    if (!id) id = 'camera_' + (cameras.length + 1);
+    const taken = function (s) {
+      return cameras.some(function (x) { return camIdNormalized(x) === s; });
+    };
+    if (!taken(id)) return id;
+    let n = 2;
+    let candidate;
+    do {
+      candidate = id + '_' + n;
+      n += 1;
+    } while (taken(candidate));
+    return candidate;
+  }
+
+  function addCameraFromDiscovery(item) {
+    const sourceType = item.source === 'usb' ? 'usb' : 'rtsp';
+    const sourceValue = sourceType === 'usb'
+      ? String(item.usb_index ?? item.source ?? 0)
+      : String(item.rtsp_url || item.display_url || '');
+    const baseId =
+      item.recipe_cam_id != null && String(item.recipe_cam_id).trim() !== ''
+        ? String(item.recipe_cam_id).trim()
+        : 'camera_' + (cameras.length + 1);
+    const row = {
+      enabled: true,
+      cam_id: uniquifyCamId(baseId),
+      source_type: sourceType,
+      source_value: sourceValue,
+      memory_seconds: parseInt(document.getElementById('dMem').value || '3', 10)
+    };
+    if (cameras.some(function (x) { return sourceIdentityKey(x) === sourceIdentityKey(row); })) {
+      return false;
+    }
+    cameras.push(row);
+    renderCameraRows();
+    return true;
+  }
+
+  function addManualCamera() {
+    const camId = document.getElementById('manualCamId').value.trim();
+    const sourceType = document.getElementById('manualSourceType').value;
+    const rawSource = document.getElementById('manualSourceValue').value.trim();
+    const mem = parseInt(document.getElementById('manualMem').value || '3', 10);
+    if (!camId) {
+      discoverStatus.textContent = 'Enter a cam_id.';
+      return;
+    }
+    if (!rawSource) {
+      discoverStatus.textContent = 'Enter a source (RTSP URL, USB index, etc.).';
+      return;
+    }
+    let sourceValue;
+    if (sourceType === 'usb') {
+      if (!/^\d+$/.test(rawSource)) {
+        discoverStatus.textContent = 'USB source must be a numeric camera index.';
+        return;
+      }
+      sourceValue = rawSource;
+    } else {
+      sourceValue = rawSource;
+    }
+    const row = {
+      enabled: true,
+      cam_id: camId,
+      source_type: sourceType,
+      source_value: sourceValue,
+      memory_seconds: mem
+    };
+    const added = tryAddCameraRow(row);
+    if (!added.ok) {
+      if (added.reason === 'cam_id') {
+        discoverStatus.textContent = 'That cam_id is already in use.';
+      } else {
+        discoverStatus.textContent = 'That source is already in the list (same type + URL/index).';
+      }
+      return;
+    }
+    discoverStatus.textContent = 'Camera added (' + cameras.length + ' in list).';
+    document.getElementById('manualSourceValue').value = '';
+  }
+
+  function renderCameraRows() {
+    cameraRows.innerHTML = '';
+    cameras.forEach((c, idx) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><input type="checkbox" ${c.enabled ? 'checked' : ''} data-k="enabled" data-i="${idx}"></td>
+        <td><input class="input" data-k="cam_id" data-i="${idx}" value="${escAttr(c.cam_id)}"></td>
+        <td><select class="input" data-k="source_type" data-i="${idx}">
+          <option value="usb" ${c.source_type === 'usb' ? 'selected' : ''}>usb</option>
+          <option value="rtsp" ${c.source_type === 'rtsp' ? 'selected' : ''}>rtsp</option>
+          <option value="ip" ${c.source_type === 'ip' ? 'selected' : ''}>ip</option>
+        </select></td>
+        <td><input class="input mono" data-k="source_value" data-i="${idx}" value="${escAttr(c.source_value)}"></td>
+        <td class="mono">${escText(c.source_value)}</td>
+        <td><button type="button" class="btn btn-secondary" data-remove="${idx}" style="padding:4px 10px;font-size:0.82rem;">Remove</button></td>`;
+      cameraRows.appendChild(tr);
+    });
+    cameraRows.querySelectorAll('[data-k]').forEach(el => {
+      el.addEventListener('change', () => {
+        const i = parseInt(el.getAttribute('data-i'), 10);
+        const key = el.getAttribute('data-k');
+        const prev = cameras[i][key];
+        cameras[i][key] = el.type === 'checkbox' ? !!el.checked : el.value;
+        const conflict = rowConflictsWithOthers(i);
+        if (conflict) {
+          cameras[i][key] = prev;
+          discoverStatus.textContent = conflict === 'cam_id'
+            ? 'cam_id must be unique.'
+            : 'That source is already used on another row.';
+          renderCameraRows();
+        }
+      });
+    });
+    cameraRows.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const i = parseInt(btn.getAttribute('data-remove'), 10);
+        cameras.splice(i, 1);
+        renderCameraRows();
+      });
+    });
+  }
+
+  async function runDiscovery() {
+    discoverStatus.textContent = 'Scanning…';
+    let addedFromScan = 0;
+    const body = {
+      usb: document.getElementById('dUsb').checked,
+      usb_max_index: 10,
+      network: document.getElementById('dNet').checked,
+      hosts_text: document.getElementById('dHosts').value,
+      scan_local_subnets: false,
+      extra_subnets_text: '',
+      max_scan_hosts: 254,
+      tcp_probe_timeout: 0.35,
+      rtsp_port: 554,
+      rtsp_user: document.getElementById('dUser').value,
+      rtsp_password: document.getElementById('dPass').value,
+      timeout_sec: 3.5,
+      memory_seconds: parseInt(document.getElementById('dMem').value || '3', 10),
+    };
+    try {
+      const res = await fetch('/api/discover/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, {stream:true});
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (!line) continue;
+          const ev = JSON.parse(line);
+          if (ev.type === 'result' && ev.item && ev.item.success) {
+            if (addCameraFromDiscovery(ev.item)) addedFromScan += 1;
+          }
+          if (ev.type === 'warning') discoverStatus.textContent = ev.message || '';
+        }
+      }
+      const total = cameras.length;
+      if (addedFromScan > 0) {
+        discoverStatus.textContent = 'Added ' + addedFromScan + ' from scan (' + total + ' in list).';
+      } else if (total === 0) {
+        discoverStatus.textContent = 'No cameras from scan. Add some manually above.';
+      } else {
+        discoverStatus.textContent = 'No new cameras from scan (' + total + ' already in list).';
+      }
+    } catch (e) {
+      discoverStatus.textContent = 'Discovery error: ' + (e.message || String(e));
+    }
+  }
+
+  function buildPayload() {
+    return {
+      recipe_name: document.getElementById('recipeName').value,
+      set_default: document.getElementById('setDefault').checked,
+      patrol_time: parseFloat(document.getElementById('patrolTime').value),
+      data_root: document.getElementById('dataRoot').value,
+      sqlite_path: document.getElementById('sqlitePath').value,
+      secrets_path: document.getElementById('secretsPath').value,
+      input_items: cameras,
+      media_root: document.getElementById('mediaRoot').value,
+      media_retention_days: parseInt(document.getElementById('mediaRetentionDays').value, 10),
+      media_max_total_mb: parseFloat(document.getElementById('mediaMaxTotalMb').value),
+      media_max_files_per_camera: parseInt(document.getElementById('mediaMaxFilesPerCamera').value, 10),
+      media_retention_every_n_cycles: parseInt(document.getElementById('mediaRetentionEvery').value, 10),
+      event_log_retention_days: parseInt(document.getElementById('eventRetentionDays').value, 10),
+      event_log_retention_every_n_cycles: parseInt(document.getElementById('eventRetentionEvery').value, 10),
+      use_motion: document.getElementById('useMotion').checked,
+      motion_threshold: parseInt(document.getElementById('motionThreshold').value, 10),
+      use_detector: document.getElementById('useDetector').checked,
+      detector_weights: document.getElementById('weights').value,
+      conf_threshold: parseFloat(document.getElementById('confThreshold').value),
+      iou_threshold: parseFloat(document.getElementById('iouThreshold').value),
+      batch_size: 16,
+      use_face_identification: document.getElementById('useFaceIdentification').checked,
+      face_gallery_path: document.getElementById('faceGalleryPath').value,
+      face_detector_backend: document.getElementById('faceDetectorBackend').value,
+      face_model_name: document.getElementById('faceModelName').value,
+      face_align: document.getElementById('faceAlign').checked,
+      face_distance_metric: document.getElementById('faceDistanceMetric').value,
+      face_match_threshold: parseFloat(document.getElementById('faceMatchThreshold').value),
+      face_champion_frame_policy: document.getElementById('faceChampionPolicy').value,
+      face_recognition_cooldown_seconds_per_identity: parseInt(document.getElementById('faceRecCooldown').value, 10),
+      face_unknown_prompt_cooldown_seconds: parseInt(document.getElementById('faceUnknownCooldown').value, 10),
+      face_pending_ttl_days: parseInt(document.getElementById('facePendingTtl').value, 10),
+      face_max_exemplars_per_identity: parseInt(document.getElementById('faceMaxExemplars').value, 10),
+      web_host: document.getElementById('webHost').value,
+      web_port: parseInt(document.getElementById('webPort').value, 10),
+      enable_telegram: document.getElementById('enableTelegram').checked,
+      notify_on_preproc: ['text'],
+      notify_on_detection: ['gif'],
+      telegram_notification_rate_limit: parseInt(document.getElementById('tgRate').value, 10),
+      telegram_outbound_strategy: document.getElementById('tgStrategy').value,
+      telegram_gif_fps: parseInt(document.getElementById('tgGifFps').value, 10),
+      telegram_gif_duration: parseInt(document.getElementById('tgGifDuration').value, 10),
+      telegram_video_fps: parseInt(document.getElementById('tgVideoFps').value, 10),
+      telegram_video_duration: parseInt(document.getElementById('tgVideoDuration').value, 10),
+      telegram_video_format: document.getElementById('tgVideoFormat').value,
+      telegram_max_file_size_mb: parseFloat(document.getElementById('tgMaxFileSize').value),
+      telegram_api_base_url: document.getElementById('tgBase').value
+    };
+  }
+
+  async function callValidate() {
+    saveStatus.textContent = 'Validating...';
+    const res = await fetch('/api/recipe/validate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(buildPayload()),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      saveStatus.textContent = 'Validation OK. Recipe slug: ' + data.recipe_slug;
+      return true;
+    }
+    saveStatus.textContent = 'Validation failed: ' + (data.errors || []).join(' | ');
+    return false;
+  }
+
+  async function callSave() {
+    if (!await callValidate()) return;
+    saveStatus.textContent = 'Saving...';
+    const res = await fetch('/api/recipe/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(buildPayload()),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      saveStatus.textContent = 'Save error: ' + (data.detail || JSON.stringify(data));
+      return;
+    }
+    saveStatus.textContent =
+      `Saved: ${data.saved_path}. Default: ${data.default_path || 'not changed'}. ` +
+      `Run: ${data.run_command}`;
+  }
+
+  function waitForDashboard() {
+    const maxMs = 60 * 1000;
+    const intervalMs = 800;
+    const start = Date.now();
+    saveStatus.textContent = 'Waiting for dashboard…';
+    function tick() {
+      if (Date.now() - start >= maxMs) {
+        window.location.reload();
+        return;
+      }
+      fetch('/health', { cache: 'no-store' })
+        .then(function (r) {
+          if (!r.ok) throw new Error('bad');
+          return r.json();
+        })
+        .then(function (data) {
+          // Main app identifies as spyoncino; recipe builder as recipe-builder.
+          if (data && data.service === 'spyoncino') {
+            window.location.reload();
+            return;
+          }
+          setTimeout(tick, intervalMs);
+        })
+        .catch(function () {
+          setTimeout(tick, intervalMs);
+        });
+    }
+    setTimeout(tick, 300);
+  }
+
+  async function callSaveAndLaunch() {
+    if (!await callValidate()) return;
+    saveStatus.textContent = 'Starting…';
+    let res;
+    try {
+      res = await fetch('/api/recipe/save-and-launch', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(buildPayload()),
+      });
+    } catch (e) {
+      waitForDashboard();
+      return;
+    }
+    let data;
+    try {
+      data = await res.json();
+    } catch (e) {
+      waitForDashboard();
+      return;
+    }
+    if (!res.ok) {
+      saveStatus.textContent = 'Error: ' + (data.detail || JSON.stringify(data));
+      return;
+    }
+    waitForDashboard();
+  }
+
+  document.getElementById('btnAddManual').addEventListener('click', addManualCamera);
+  document.getElementById('manualSourceValue').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); addManualCamera(); }
+  });
+  document.getElementById('btnDiscover').addEventListener('click', runDiscovery);
+  document.getElementById('btnValidate').addEventListener('click', () => { callValidate(); });
+  const btnSave = document.getElementById('btnSave');
+  if (btnSave) {
+    btnSave.addEventListener('click', () => { callSave(); });
+  }
+  const btnSaveAndStart = document.getElementById('btnSaveAndStart');
+  if (btnSaveAndStart) {
+    btnSaveAndStart.addEventListener('click', () => { callSaveAndLaunch(); });
+  }
+})();
+</script>
+</body>
+</html>

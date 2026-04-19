@@ -1,0 +1,2364 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Spyoncino Web Interface</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+{{FAV}}    <style>
+{{SHARED_CSS}}
+        body {
+            padding: var(--space-5);
+        }
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+        }
+        .topbar {
+            margin-bottom: var(--space-5);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: var(--space-4);
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+        }
+        .brand img {
+            width: 28px;
+            height: 28px;
+        }
+        .brand h1 {
+            margin: 0;
+            font-size: 1.2rem;
+        }
+        .section-title {
+            margin-bottom: var(--space-4);
+            color: var(--text-1);
+            font-size: 1rem;
+            letter-spacing: 0.01em;
+        }
+        .grid {
+            display: grid;
+            gap: var(--space-4);
+        }
+        .metrics-grid {
+            grid-template-columns: repeat(6, minmax(140px, 1fr));
+            margin-bottom: var(--space-5);
+        }
+        .metric {
+            padding: var(--space-4);
+        }
+        .metric-label {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-bottom: var(--space-2);
+        }
+        .metric-value {
+            font-size: 1.4rem;
+            font-weight: 700;
+        }
+        .main-grid {
+            grid-template-columns: 1fr;
+        }
+        .panel {
+            padding: var(--space-5);
+        }
+        .panel h2 {
+            margin: 0 0 var(--space-4);
+            font-size: 1.05rem;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 700;
+        }
+        .status-running {
+            background: rgba(61, 220, 132, 0.15);
+            border: 1px solid rgba(61, 220, 132, 0.35);
+            color: var(--accent-green);
+        }
+        .status-stopped {
+            background: rgba(255, 107, 107, 0.15);
+            border: 1px solid rgba(255, 107, 107, 0.35);
+            color: #ff9a9a;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: var(--space-2);
+            font-size: 0.92rem;
+        }
+        .panel-table-wrap {
+            width: 100%;
+            overflow-x: auto;
+            overflow-y: hidden;
+            scrollbar-width: thin;
+        }
+        .panel-table-wrap table {
+            min-width: 620px;
+        }
+        .events-table td {
+            word-break: break-word;
+        }
+        .events-table td:nth-child(3) {
+            min-width: 220px;
+        }
+        .events-panel {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-2);
+        }
+        .events-scroll {
+            max-height: min(36vh, 280px);
+            overflow-y: auto;
+            overflow-x: auto;
+        }
+        .events-scroll table {
+            margin-top: 0;
+        }
+        .events-more-wrap {
+            padding-top: var(--space-2);
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: center;
+        }
+        th, td {
+            padding: 11px 10px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+        th {
+            color: var(--text-1);
+            font-weight: 600;
+            font-size: 0.84rem;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+        }
+        tr:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+        .event-type { font-weight: 600; }
+        .event-motion { color: #9be9b2; }
+        .event-person { color: #c4f4a8; }
+        .event-face { color: #7ef0b6; }
+        .event-error { color: #ff9a9a; }
+        .event-info { color: #9bd8b6; }
+        .config-form {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            gap: var(--space-2);
+            align-items: center;
+            min-width: 0;
+        }
+        .config-form .input {
+            min-width: 0;
+            width: 100%;
+        }
+        .config-form .btn {
+            height: 36px;
+            padding: 0 12px;
+            font-size: 0.86rem;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .command-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: var(--space-3);
+        }
+        .command-item {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: var(--space-3);
+            background: rgba(255, 255, 255, 0.01);
+        }
+        .command-item h3 {
+            margin: 0 0 var(--space-2);
+            font-size: 0.92rem;
+            color: var(--text-1);
+        }
+        .row {
+            display: flex;
+            gap: var(--space-2);
+            align-items: center;
+        }
+        .row .input {
+            min-width: 0;
+        }
+        .status-line {
+            margin-top: var(--space-2);
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+        .media-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: var(--space-3);
+        }
+        .media-toolbar {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: var(--space-2);
+            margin-bottom: var(--space-3);
+            align-items: end;
+        }
+        .media-toolbar > * {
+            min-width: 0;
+        }
+        .media-toolbar .input,
+        .media-toolbar .btn {
+            height: 34px;
+            font-size: 0.82rem;
+            padding: 0 10px;
+        }
+        .media-toolbar input[type="datetime-local"] {
+            font-size: 0.79rem;
+        }
+        .media-filter-field {
+            display: grid;
+            gap: 4px;
+        }
+        .media-filter-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            letter-spacing: 0.01em;
+        }
+        .media-toolbar-action {
+            display: flex;
+            align-items: flex-end;
+        }
+        .media-toolbar-action .btn {
+            width: 100%;
+        }
+        .media-card {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.01);
+            cursor: pointer;
+            transition: border-color 120ms ease, transform 120ms ease;
+        }
+        .media-card:hover {
+            border-color: rgba(61, 220, 132, 0.45);
+            transform: translateY(-1px);
+        }
+        .media-thumb {
+            display: block;
+            width: 100%;
+            height: 120px;
+            object-fit: cover;
+            background: #0a0f0c;
+            border-bottom: 1px solid var(--border);
+        }
+        .media-card-body {
+            padding: var(--space-2) var(--space-3) var(--space-3);
+            display: grid;
+            gap: var(--space-2);
+        }
+        .chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .chip {
+            font-size: 0.72rem;
+            color: #c7f7d9;
+            border: 1px solid rgba(61, 220, 132, 0.28);
+            background: rgba(61, 220, 132, 0.08);
+            border-radius: 999px;
+            padding: 2px 8px;
+        }
+        .media-empty {
+            color: var(--text-muted);
+            font-size: 0.92rem;
+        }
+        code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            color: #e9f2ec;
+            background: rgba(255, 255, 255, 0.04);
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+        #toast {
+            position: fixed;
+            right: var(--space-4);
+            bottom: var(--space-4);
+            min-width: 260px;
+            max-width: 420px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            padding: var(--space-3) var(--space-4);
+            background: var(--bg-1);
+            color: var(--text-0);
+            box-shadow: var(--shadow-soft);
+            transform: translateY(12px);
+            opacity: 0;
+            pointer-events: none;
+            transition: transform 140ms ease, opacity 140ms ease;
+        }
+        #toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        #toast.error {
+            border-color: rgba(255, 107, 107, 0.5);
+        }
+        #toast.success {
+            border-color: rgba(61, 220, 132, 0.5);
+        }
+        .overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(4, 10, 7, 0.78);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: var(--space-4);
+            z-index: 80;
+        }
+        .overlay.show {
+            display: flex;
+        }
+        .overlay-card {
+            width: min(1040px, 100%);
+            height: min(88vh, calc(100vh - 32px));
+            overflow: hidden;
+            background: var(--bg-1);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-soft);
+            padding: var(--space-4);
+            display: grid;
+            grid-template-rows: auto 1fr;
+            gap: var(--space-3);
+        }
+        .overlay-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: var(--space-3);
+        }
+        .overlay-body {
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 1fr;
+            grid-template-rows: minmax(0, 1fr) auto;
+            gap: var(--space-3);
+            overflow: hidden;
+        }
+        .overlay-title {
+            margin: 0;
+            font-size: 1rem;
+            color: var(--text-1);
+        }
+        .overlay-preview {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: #060b08;
+            height: 100%;
+            min-height: 0;
+            object-fit: contain;
+        }
+        .overlay-meta {
+            margin: 0;
+            padding: var(--space-3);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: rgba(255, 255, 255, 0.02);
+            color: #d5efe0;
+            font-size: 0.84rem;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow: auto;
+            max-height: 200px;
+        }
+        .overlay-meta,
+        .events-scroll {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(61, 220, 132, 0.45) rgba(255, 255, 255, 0.05);
+        }
+        .overlay-actions {
+            display: none;
+            grid-template-columns: 1fr auto auto;
+            gap: var(--space-2);
+            align-items: center;
+            overflow: visible;
+        }
+        #overlay-assign-name,
+        #overlay-reassign-name {
+            margin-left: 4px;
+            width: calc(100% - 4px);
+        }
+        #overlay-face-assigned-actions {
+            grid-column: 1 / -1;
+        }
+        #overlay-face-assigned-actions .overlay-reassign-row {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            gap: var(--space-2);
+            align-items: center;
+        }
+        .overlay-actions.show {
+            display: grid;
+        }
+        .overlay-identity-suggestions {
+            display: none;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 4px;
+        }
+        .overlay-identity-suggestions.show {
+            display: flex;
+        }
+        .identity-btn {
+            height: 30px;
+            padding: 0 10px;
+            font-size: 0.78rem;
+            border-radius: 999px;
+        }
+        .overlay-meta::-webkit-scrollbar,
+        .events-scroll::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+        .overlay-meta::-webkit-scrollbar-track,
+        .events-scroll::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 999px;
+        }
+        .overlay-meta::-webkit-scrollbar-thumb,
+        .events-scroll::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, rgba(61, 220, 132, 0.55), rgba(46, 207, 115, 0.45));
+            border-radius: 999px;
+            border: 2px solid rgba(10, 15, 12, 0.65);
+        }
+        .overlay-meta::-webkit-scrollbar-thumb:hover,
+        .events-scroll::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, rgba(61, 220, 132, 0.75), rgba(46, 207, 115, 0.62));
+        }
+        .overlay-close-btn {
+            min-width: 40px;
+            width: 40px;
+            height: 40px;
+            padding: 0;
+            position: relative;
+            font-size: 0;
+            line-height: 0;
+        }
+        .overlay-close-btn::before,
+        .overlay-close-btn::after {
+            content: "";
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 20px;
+            height: 2px;
+            background: currentColor;
+            transform-origin: center;
+            border-radius: 2px;
+        }
+        .overlay-close-btn::before {
+            transform: translate(-50%, -50%) rotate(45deg);
+        }
+        .overlay-close-btn::after {
+            transform: translate(-50%, -50%) rotate(-45deg);
+        }
+        .insights-grid {
+            grid-template-columns: minmax(280px, 380px) 1fr;
+            margin-bottom: var(--space-5);
+            align-items: stretch;
+        }
+        .analytics-controls {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: var(--space-4);
+            margin-bottom: var(--space-4);
+        }
+        .analytics-horizon {
+            display: grid;
+            gap: 6px;
+            min-width: 140px;
+        }
+        .analytics-horizon .input {
+            height: 36px;
+        }
+        .analytics-series-fieldset {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: var(--space-3) var(--space-4);
+            margin: 0;
+            flex: 1;
+            min-width: min(100%, 420px);
+        }
+        .analytics-series-legend {
+            padding: 0 var(--space-2);
+            margin-bottom: var(--space-2);
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+        .analytics-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--space-2);
+            align-items: center;
+        }
+        .analytics-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            padding: 7px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.02);
+            font-size: 0.84rem;
+            color: var(--text-1);
+            user-select: none;
+            transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+        }
+        .analytics-chip:hover {
+            border-color: rgba(61, 220, 132, 0.25);
+            background: rgba(255, 255, 255, 0.04);
+        }
+        .analytics-chip:has(input:checked) {
+            border-color: rgba(61, 220, 132, 0.45);
+            background: rgba(61, 220, 132, 0.1);
+            color: var(--text-0);
+        }
+        .analytics-chip input[type="checkbox"] {
+            width: 15px;
+            height: 15px;
+            margin: 0;
+            accent-color: var(--accent-green);
+            cursor: pointer;
+        }
+        .analytics-actions {
+            display: flex;
+            align-items: flex-end;
+            gap: var(--space-2);
+        }
+        .analytics-chart-wrap {
+            position: relative;
+            height: 280px;
+            width: 100%;
+        }
+        .last-seen-body {
+            font-size: 0.92rem;
+            line-height: 1.45;
+            color: var(--text-0);
+            min-height: 2.5rem;
+        }
+        .last-seen-row {
+            padding: var(--space-3) 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .last-seen-row:last-child {
+            border-bottom: none;
+        }
+        .last-seen-name {
+            font-weight: 700;
+            color: var(--accent-green);
+        }
+        .last-seen-highlight {
+            padding: var(--space-4);
+            border-radius: var(--radius-sm);
+            border: 1px solid rgba(61, 220, 132, 0.35);
+            background: rgba(61, 220, 132, 0.06);
+            margin-bottom: var(--space-3);
+        }
+        .last-seen-highlight .last-seen-name {
+            font-size: 1.05rem;
+        }
+        .last-seen-sub {
+            margin: 0 0 var(--space-3);
+            font-size: 0.85rem;
+        }
+        .last-seen-toolbar {
+            margin-top: var(--space-3);
+            align-items: center;
+            gap: var(--space-2);
+        }
+        .last-seen-toolbar .input {
+            max-width: 120px;
+            height: 34px;
+        }
+        @media (max-width: 900px) {
+            .insights-grid {
+                grid-template-columns: 1fr;
+            }
+            .overlay-meta {
+                max-height: 180px;
+            }
+        }
+        @media (max-width: 1140px) {
+            .metrics-grid { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+            .media-toolbar { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+        }
+        @media (max-width: 760px) {
+            body { padding: var(--space-4); }
+            .topbar { flex-direction: column; align-items: flex-start; }
+            .metrics-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+            .panel { padding: var(--space-4); overflow-x: visible; }
+            .media-toolbar { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+            #config .config-form {
+                min-width: 420px;
+            }
+        }
+        @media (max-width: 560px) {
+            .metrics-grid { grid-template-columns: 1fr; }
+            .media-toolbar { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="topbar">
+            <div class="brand">
+                <img src="/static/logo.png" alt="Spyoncino logo">
+                <h1>Spyoncino Dashboard</h1>
+            </div>
+            <button class="btn btn-primary" onclick="refreshAll()">Refresh All</button>
+        </div>
+
+        <div class="section-title">System Overview</div>
+        <div id="metrics" class="grid metrics-grid">
+                <div class="metric card">
+                    <div class="metric-label">Uptime</div>
+                    <div class="metric-value" id="uptime">-</div>
+                </div>
+                <div class="metric card">
+                    <div class="metric-label">Total Events</div>
+                    <div class="metric-value" id="total-events">-</div>
+                </div>
+                <div class="metric card">
+                    <div class="metric-label">Motion Events</div>
+                    <div class="metric-value" id="motion-events">-</div>
+                </div>
+                <div class="metric card">
+                    <div class="metric-label">Person Events</div>
+                    <div class="metric-value" id="person-events">-</div>
+                </div>
+                <div class="metric card">
+                    <div class="metric-label">Face Events</div>
+                    <div class="metric-value" id="face-events">-</div>
+                </div>
+                <div class="metric card">
+                    <div class="metric-label">Errors</div>
+                    <div class="metric-value" id="error-events">-</div>
+                </div>
+        </div>
+
+        <div class="section-title">Analytics &amp; presence</div>
+        <div class="grid insights-grid">
+            <div class="card panel">
+                <h2>Last seen</h2>
+                <p class="muted last-seen-sub" id="last-seen-sub">Most recent named face sighting</p>
+                <div id="last-seen-body" class="last-seen-body muted">Loading…</div>
+                <div class="row last-seen-toolbar">
+                    <label class="media-filter-label" for="last-seen-hours">Window (hours)</label>
+                    <select class="input" id="last-seen-hours" aria-label="Last seen time window">
+                        <option value="1">1</option>
+                        <option value="6">6</option>
+                        <option value="24" selected>24</option>
+                        <option value="72">72</option>
+                        <option value="168">168</option>
+                    </select>
+                </div>
+            </div>
+            <div class="card panel">
+                <h2>Event trends</h2>
+                <div class="analytics-controls">
+                    <div class="analytics-horizon">
+                        <label class="media-filter-label" for="analytics-hours">Time horizon (hours)</label>
+                        <select class="input" id="analytics-hours" aria-label="Analytics horizon">
+                            <option value="1">1</option>
+                            <option value="6">6</option>
+                            <option value="12">12</option>
+                            <option value="24" selected>24</option>
+                            <option value="48">48</option>
+                            <option value="72">72</option>
+                            <option value="168">168</option>
+                        </select>
+                    </div>
+                    <fieldset class="analytics-series-fieldset" id="analytics-series-fieldset">
+                        <div class="analytics-series-legend">Plot series</div>
+                        <div class="analytics-chip-row" id="analytics-series-toggles">
+                            <label class="analytics-chip"><input type="checkbox" id="series-motion" checked><span>Motion</span></label>
+                            <label class="analytics-chip"><input type="checkbox" id="series-person" checked><span>Person</span></label>
+                            <label class="analytics-chip"><input type="checkbox" id="series-face" checked><span>Face</span></label>
+                            <label class="analytics-chip"><input type="checkbox" id="series-error" checked><span>Error</span></label>
+                            <label class="analytics-chip"><input type="checkbox" id="series-system" checked><span>System</span></label>
+                        </div>
+                    </fieldset>
+                    <div class="analytics-actions">
+                        <button type="button" class="btn btn-secondary" id="analytics-retry" style="display:none;">Retry</button>
+                    </div>
+                </div>
+                <p class="muted" id="analytics-no-series" style="display:none;">Select at least one series to plot.</p>
+                <div id="analytics-chart-wrap" class="analytics-chart-wrap">
+                    <canvas id="analytics-chart" aria-label="Event counts by hour"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-grid grid">
+            <div class="card panel">
+                <h2>Services Status</h2>
+                <div id="services" class="muted">Loading services...</div>
+            </div>
+
+            <div class="card panel">
+                <h2>Command Center</h2>
+                <div class="command-grid">
+                    <div class="command-item">
+                        <h3>Patrol Loop</h3>
+                        <div class="row">
+                            <button class="btn btn-secondary" id="pause-toggle-btn" onclick="togglePauseState()">Loading status...</button>
+                        </div>
+                        <div class="status-line" id="runtime-status">Runtime status: unknown</div>
+                    </div>
+                    <div class="command-item">
+                        <h3>On-demand Snap</h3>
+                        <div class="row">
+                            <select class="input" id="snap-camera-id"></select>
+                            <button class="btn btn-secondary" onclick="runSnap()">Snap</button>
+                        </div>
+                        <div class="status-line" id="snap-result">Choose a camera to capture a snapshot.</div>
+                    </div>
+                    <div class="command-item">
+                        <h3>Dashboard Session</h3>
+                        <div class="row">
+                            <button class="btn btn-secondary" onclick="logoutCurrent()">Logout</button>
+                            <button class="btn btn-danger" onclick="logoutAll()">Logout all sessions</button>
+                        </div>
+                        <div class="status-line">Use "Logout all" after changing credentials.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card panel">
+                <h2>Recent Events</h2>
+                <div id="events" class="muted">Loading events...</div>
+            </div>
+
+            <div class="card panel">
+                <h2>Configuration</h2>
+                <div id="config" class="muted">Loading configuration...</div>
+            </div>
+
+            <div class="card panel">
+                <h2>Latest Media</h2>
+                <div class="media-toolbar">
+                    <div class="media-filter-field">
+                        <label class="media-filter-label" for="media-from">From</label>
+                        <input class="input" id="media-from" type="datetime-local" />
+                    </div>
+                    <div class="media-filter-field">
+                        <label class="media-filter-label" for="media-to">To</label>
+                        <input class="input" id="media-to" type="datetime-local" />
+                    </div>
+                    <select class="input" id="media-camera">
+                        <option value="">All cameras</option>
+                    </select>
+                    <select class="input" id="media-stage">
+                        <option value="">All stages</option>
+                    </select>
+                    <select class="input" id="media-kind">
+                        <option value="">All types</option>
+                    </select>
+                    <select class="input" id="media-face-filter" aria-label="Faces: open, ignored, or by person"></select>
+                    <div class="media-toolbar-action">
+                        <button class="btn btn-secondary" id="media-apply-btn" onclick="toggleMediaFilters()">Apply</button>
+                    </div>
+                </div>
+                <div id="media-grid" class="media-grid"></div>
+            </div>
+        </div>
+    </div>
+    <div id="toast"></div>
+    <div id="media-overlay" class="overlay" onclick="closeMediaOverlay(event)">
+        <div class="overlay-card" onclick="event.stopPropagation()">
+            <div class="overlay-head">
+                <h3 id="overlay-title" class="overlay-title">Media details</h3>
+                <button class="btn btn-danger overlay-close-btn" onclick="closeMediaOverlay()" aria-label="Close overlay"></button>
+            </div>
+            <div class="overlay-body">
+                <img id="overlay-image" class="overlay-preview" alt="Selected media preview" />
+                <div id="overlay-video-wrap" style="display:none;">
+                    <video id="overlay-video" class="overlay-preview" controls></video>
+                </div>
+                <div id="overlay-face-actions" class="overlay-actions">
+                    <div id="overlay-face-open-actions" style="display: contents;">
+                        <input class="input" id="overlay-assign-name" placeholder="Assign identity name" onkeydown="overlayAssignNameKeydown(event)" />
+                        <button class="btn btn-secondary" onclick="assignOverlayPendingFace()">Assign</button>
+                        <button class="btn btn-danger" onclick="ignoreOverlayPendingFace()">Ignore</button>
+                    </div>
+                    <div id="overlay-face-assigned-actions" style="display: none;">
+                        <div class="status-line" style="margin-bottom: 6px;">Wrong assignment? Who is this?</div>
+                        <div class="overlay-reassign-row">
+                            <input class="input" id="overlay-reassign-name" placeholder="Name (new or existing)" onkeydown="overlayReassignNameKeydown(event)" />
+                            <button type="button" class="btn btn-secondary" onclick="reassignOverlayAssignedFace()">Reassign</button>
+                            <button type="button" class="btn btn-danger" onclick="unassignOverlayAssignedFace()" title="Remove from identity; back to unknown">Unknown</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="overlay-identity-suggestions" class="overlay-identity-suggestions"></div>
+                <pre id="overlay-meta" class="overlay-meta"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+        let toastTimer = null;
+        let latestMediaRows = [];
+        let pendingFaceRows = [];
+        let knownIdentities = [];
+        let mediaFiltersApplied = false;
+        let overlayPendingFaceId = null;
+        let overlayPendingFaceStatus = '';
+        let recentEventsCache = [];
+        const RECENT_EVENTS_PAGE = 12;
+        let recentEventsVisibleCount = RECENT_EVENTS_PAGE;
+        let analyticsChart = null;
+
+        const ANALYTICS_SERIES_META = {
+            motion: { label: 'Motion', border: 'rgb(235, 162, 54)', fill: 'rgba(235, 162, 54, 0.08)', axis: 'y' },
+            person: { label: 'Person', border: 'rgb(255, 140, 0)', fill: 'rgba(255, 140, 0, 0.08)', axis: 'y' },
+            face: { label: 'Face', border: 'rgb(88, 180, 95)', fill: 'rgba(88, 180, 95, 0.1)', axis: 'y' },
+            error: { label: 'Error', border: 'rgb(180, 90, 210)', fill: 'rgba(180, 90, 210, 0.08)', axis: 'y' },
+            system: { label: 'System (patrol %)', border: 'rgb(200, 215, 205)', fill: 'rgba(200, 215, 205, 0.1)', axis: 'y1' },
+        };
+
+        function escapeHtml(s) {
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function buildAnalyticsLabels(hours) {
+            const labels = [];
+            for (let i = 0; i < hours; i++) {
+                labels.push(`-${hours - 1 - i}h`);
+            }
+            return labels;
+        }
+
+        function getAnalyticsSeriesSelection() {
+            return {
+                motion: document.getElementById('series-motion')?.checked ?? true,
+                person: document.getElementById('series-person')?.checked ?? true,
+                face: document.getElementById('series-face')?.checked ?? true,
+                error: document.getElementById('series-error')?.checked ?? true,
+                system: document.getElementById('series-system')?.checked ?? true,
+            };
+        }
+
+        function saveAnalyticsPrefs() {
+            try {
+                const h = document.getElementById('analytics-hours')?.value;
+                if (h) {
+                    localStorage.setItem('dashboard.analytics.hours', h);
+                }
+                localStorage.setItem(
+                    'dashboard.analytics.series',
+                    JSON.stringify(getAnalyticsSeriesSelection()),
+                );
+                const lh = document.getElementById('last-seen-hours')?.value;
+                if (lh) {
+                    localStorage.setItem('dashboard.lastSeen.hours', lh);
+                }
+            } catch (e) {
+                /* ignore */
+            }
+        }
+
+        function loadAnalyticsPrefs() {
+            try {
+                const ah = localStorage.getItem('dashboard.analytics.hours');
+                const sel = document.getElementById('analytics-hours');
+                if (ah && sel && [...sel.options].some((o) => o.value === ah)) {
+                    sel.value = ah;
+                }
+                const ls = localStorage.getItem('dashboard.lastSeen.hours');
+                const lsel = document.getElementById('last-seen-hours');
+                if (ls && lsel && [...lsel.options].some((o) => o.value === ls)) {
+                    lsel.value = ls;
+                }
+                const raw = localStorage.getItem('dashboard.analytics.series');
+                if (raw) {
+                    const o = JSON.parse(raw);
+                    ['motion', 'person', 'face', 'error', 'system'].forEach((k) => {
+                        const el = document.getElementById(`series-${k}`);
+                        if (el && typeof o[k] === 'boolean') {
+                            el.checked = o[k];
+                        }
+                    });
+                }
+            } catch (e) {
+                /* ignore */
+            }
+        }
+
+        async function fetchAnalyticsSeries() {
+            const sel = document.getElementById('analytics-hours');
+            const hours = parseInt(sel?.value || '24', 10) || 24;
+            const retryBtn = document.getElementById('analytics-retry');
+            const noSeriesMsg = document.getElementById('analytics-no-series');
+            const wrap = document.getElementById('analytics-chart-wrap');
+            const canvas = document.getElementById('analytics-chart');
+            if (typeof Chart === 'undefined' || !canvas) {
+                return;
+            }
+            const selection = getAnalyticsSeriesSelection();
+            const anySeries = Object.values(selection).some(Boolean);
+            if (!anySeries) {
+                if (analyticsChart) {
+                    analyticsChart.destroy();
+                    analyticsChart = null;
+                }
+                const existing = Chart.getChart(canvas);
+                if (existing) {
+                    existing.destroy();
+                }
+                if (noSeriesMsg) {
+                    noSeriesMsg.style.display = 'block';
+                }
+                if (wrap) {
+                    wrap.style.display = 'none';
+                }
+                if (retryBtn) {
+                    retryBtn.style.display = 'none';
+                }
+                return;
+            }
+            if (noSeriesMsg) {
+                noSeriesMsg.style.display = 'none';
+            }
+            if (wrap) {
+                wrap.style.display = 'block';
+            }
+            try {
+                const response = await fetch(
+                    `/api/analytics/series?hours=${encodeURIComponent(hours)}`,
+                );
+                if (!response.ok) {
+                    if (retryBtn) {
+                        retryBtn.style.display = 'inline-block';
+                    }
+                    showToast('Failed to load analytics', 'error');
+                    return;
+                }
+                if (retryBtn) {
+                    retryBtn.style.display = 'none';
+                }
+                const data = await response.json();
+                const series = data.series || {};
+                const h = data.hours || hours;
+                const labels = buildAnalyticsLabels(h);
+                const datasets = [];
+                for (const key of ['motion', 'person', 'face', 'error', 'system']) {
+                    if (!selection[key]) {
+                        continue;
+                    }
+                    const vals = series[key];
+                    if (!Array.isArray(vals)) {
+                        continue;
+                    }
+                    const meta = ANALYTICS_SERIES_META[key];
+                    const isSys = key === 'system';
+                    datasets.push({
+                        label: meta.label,
+                        data: vals,
+                        borderColor: meta.border,
+                        backgroundColor: meta.fill,
+                        tension: isSys ? 0.22 : 0.28,
+                        fill: false,
+                        pointRadius: 0,
+                        pointHoverRadius: 5,
+                        borderWidth: 2,
+                        yAxisID: meta.axis || 'y',
+                        borderDash: isSys ? [5, 4] : [],
+                    });
+                }
+                const hasY1 = datasets.some((d) => d.yAxisID === 'y1');
+                const hasY = datasets.some((d) => d.yAxisID === 'y');
+                const scaleY = {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(35, 50, 38, 0.55)' },
+                    ticks: { color: '#8b9890', precision: 0 },
+                    title: {
+                        display: hasY,
+                        text: 'Events',
+                        color: '#8b9890',
+                        font: { size: 11 },
+                    },
+                };
+                const scales = {
+                    x: {
+                        grid: { color: 'rgba(35, 50, 38, 0.55)' },
+                        ticks: { color: '#8b9890', maxTicksLimit: 14 },
+                    },
+                    y: hasY ? scaleY : { display: false },
+                };
+                if (hasY1) {
+                    scales.y1 = {
+                        position: 'right',
+                        min: 0,
+                        max: 100,
+                        grid: { drawOnChartArea: false },
+                        ticks: {
+                            color: '#9aa89f',
+                            callback: (v) => `${v}%`,
+                        },
+                        title: {
+                            display: true,
+                            text: 'Patrol uptime',
+                            color: '#8b9890',
+                            font: { size: 11 },
+                        },
+                    };
+                }
+                const existing = Chart.getChart(canvas);
+                if (existing) {
+                    existing.destroy();
+                }
+                analyticsChart = null;
+                const ctx = canvas.getContext('2d');
+                analyticsChart = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels, datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: {
+                                display: datasets.length > 1,
+                                labels: {
+                                    color: '#c9d2cc',
+                                    boxWidth: 14,
+                                    padding: 14,
+                                    usePointStyle: true,
+                                },
+                            },
+                            tooltip: {
+                                backgroundColor: 'rgba(16, 24, 19, 0.94)',
+                                titleColor: '#f2f5f3',
+                                bodyColor: '#c9d2cc',
+                                borderColor: '#233226',
+                                borderWidth: 1,
+                            },
+                        },
+                        scales,
+                    },
+                });
+            } catch (error) {
+                console.error('Error loading analytics series:', error);
+                if (retryBtn) {
+                    retryBtn.style.display = 'inline-block';
+                }
+                showToast('Error loading analytics', 'error');
+            }
+        }
+
+        async function fetchLastSeen() {
+            const sel = document.getElementById('last-seen-hours');
+            const hours = parseInt(sel?.value || '24', 10) || 24;
+            const body = document.getElementById('last-seen-body');
+            const sub = document.getElementById('last-seen-sub');
+            if (!body) {
+                return;
+            }
+            body.textContent = 'Loading…';
+            body.classList.add('muted');
+            try {
+                const response = await fetch(
+                    `/api/face/recent?hours=${encodeURIComponent(hours)}`,
+                );
+                if (response.status === 403) {
+                    body.innerHTML =
+                        '<span class="muted">Not available for this account.</span>';
+                    if (sub) {
+                        sub.textContent = 'Requires face read permission';
+                    }
+                    return;
+                }
+                if (!response.ok) {
+                    body.innerHTML =
+                        '<span class="muted">Could not load last seen.</span>';
+                    return;
+                }
+                const data = await response.json();
+                const identified = Array.isArray(data.identified)
+                    ? data.identified
+                    : [];
+                if (sub) {
+                    sub.textContent = `Named face sightings (last ${data.hours || hours}h)`;
+                }
+                if (!identified.length) {
+                    body.classList.add('muted');
+                    body.innerHTML =
+                        '<span class="muted">No named sightings in this window.</span>';
+                    return;
+                }
+                body.classList.remove('muted');
+                const first = identified[0];
+                const name0 = escapeHtml(String(first.display_name || '?'));
+                const cam0 = escapeHtml(String(first.camera_id || '—'));
+                const ts0 = escapeHtml(String(first.last_seen || ''));
+                let html = `
+                    <div class="last-seen-highlight">
+                        <div class="last-seen-name">${name0}</div>
+                        <div class="muted" style="font-size:0.86rem;margin-top:6px;">Camera <code>${cam0}</code></div>
+                        <div class="muted" style="font-size:0.86rem;">${ts0}</div>
+                    </div>`;
+                if (identified.length > 1) {
+                    html += '<div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:6px;">Earlier in window</div>';
+                    html += identified
+                        .slice(1, 9)
+                        .map((r) => {
+                            const nm = escapeHtml(String(r.display_name || '?'));
+                            const cm = escapeHtml(String(r.camera_id || '—'));
+                            const ts = escapeHtml(String(r.last_seen || ''));
+                            return `<div class="last-seen-row">
+                                <div><span class="last-seen-name">${nm}</span></div>
+                                <div class="muted" style="font-size:0.82rem;">Camera <code>${cm}</code> · ${ts}</div>
+                            </div>`;
+                        })
+                        .join('');
+                }
+                body.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading last seen:', error);
+                body.innerHTML = '<span class="muted">Could not load last seen.</span>';
+            }
+        }
+
+        function formatUptime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            return `${hours}h ${minutes}m`;
+        }
+
+        function formatTime(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleString();
+        }
+
+        function showToast(message, kind = 'success') {
+            const toast = document.getElementById('toast');
+            if (!toast) return;
+            toast.textContent = message;
+            toast.className = '';
+            toast.classList.add(kind === 'error' ? 'error' : 'success');
+            toast.classList.add('show');
+            if (toastTimer) {
+                clearTimeout(toastTimer);
+            }
+            toastTimer = setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2800);
+        }
+
+        function syncPauseToggle(paused, available) {
+            const btn = document.getElementById('pause-toggle-btn');
+            if (!btn) return;
+            if (!available) {
+                btn.disabled = true;
+                btn.textContent = 'Runtime unavailable';
+                return;
+            }
+            btn.disabled = false;
+            btn.dataset.paused = paused ? 'true' : 'false';
+            btn.textContent = paused ? 'Resume patrol' : 'Pause patrol';
+        }
+
+        function renderCameraSelect(select, cameraIds, keepValue, includeAll) {
+            if (!select) return;
+            if (!Array.isArray(cameraIds) || cameraIds.length === 0) {
+                select.innerHTML = includeAll
+                    ? '<option value="">All cameras</option>'
+                    : '<option value="">No cameras available</option>';
+                select.disabled = true;
+                return;
+            }
+            select.disabled = false;
+            const options = cameraIds
+                .map((id) => `<option value="${id}">${id}</option>`);
+            if (includeAll) {
+                options.unshift('<option value="">All cameras</option>');
+            }
+            select.innerHTML = options
+                .join('');
+            if (keepValue && (keepValue === "" || cameraIds.includes(keepValue))) {
+                select.value = keepValue;
+            } else if (includeAll) {
+                select.value = "";
+            }
+        }
+
+        function updateCameraOptions(cameraIds) {
+            const snapSelect = document.getElementById('snap-camera-id');
+            const mediaSelect = document.getElementById('media-camera');
+            const previousSnap = snapSelect ? snapSelect.value : "";
+            const previousMedia = mediaSelect ? mediaSelect.value : "";
+            renderCameraSelect(snapSelect, cameraIds, previousSnap, false);
+            renderCameraSelect(mediaSelect, cameraIds, previousMedia, true);
+        }
+
+        function updateMediaFacetOptions(mediaRows) {
+            const stageSelect = document.getElementById('media-stage');
+            const kindSelect = document.getElementById('media-kind');
+            if (!stageSelect || !kindSelect) return;
+            const prevStage = stageSelect.value || '';
+            const prevKind = kindSelect.value || '';
+            const existingStages = Array.from(stageSelect.querySelectorAll('option'))
+                .map((o) => String(o.value || '').trim())
+                .filter((v) => !!v);
+            const existingKinds = Array.from(kindSelect.querySelectorAll('option'))
+                .map((o) => String(o.value || '').trim())
+                .filter((v) => !!v);
+            const stages = Array.from(
+                new Set(
+                    existingStages.concat(
+                        (mediaRows || []).map((r) => String(r.stage || '').trim()).filter(Boolean)
+                    )
+                )
+            ).sort();
+            const kinds = Array.from(
+                new Set(
+                    existingKinds.concat(
+                        (mediaRows || []).map((r) => String(r.kind || '').trim()).filter(Boolean)
+                    )
+                )
+            ).sort();
+            stageSelect.innerHTML = ['<option value="">All stages</option>']
+                .concat(stages.map((s) => `<option value="${s}">${s}</option>`))
+                .join('');
+            kindSelect.innerHTML = ['<option value="">All types</option>']
+                .concat(kinds.map((k) => `<option value="${k}">${k}</option>`))
+                .join('');
+            if (prevStage) stageSelect.value = prevStage;
+            if (prevKind) kindSelect.value = prevKind;
+        }
+
+        function populateMediaFaceFilterOptions() {
+            const sel = document.getElementById('media-face-filter');
+            if (!sel) return;
+            const prev = sel.value || '';
+            const frag = document.createDocumentFragment();
+            const add = (value, text) => {
+                const o = document.createElement('option');
+                o.value = value;
+                o.textContent = text;
+                frag.appendChild(o);
+            };
+            add('', 'All faces');
+            add('open', 'Open');
+            add('ignored', 'Ignored');
+            const byDisplay = new Map();
+            const sortedKnown = [...(knownIdentities || [])].sort((a, b) =>
+                String(a.id || '').localeCompare(String(b.id || ''))
+            );
+            sortedKnown.forEach((i) => {
+                const id = String(i.id || '').trim();
+                const label = String(i.display_name || id).trim();
+                const key = label.toLowerCase();
+                if (!id || !label || !key || byDisplay.has(key)) return;
+                byDisplay.set(key, {mode: 'id', value: id, label});
+            });
+            (pendingFaceRows || []).forEach((r) => {
+                if (String(r.status || '') !== 'assigned') return;
+                const aid = String(r.assigned_identity_id || '').trim();
+                const label = String(r.assigned_display_name || '').trim();
+                const key = label.toLowerCase();
+                if (!label || !key || byDisplay.has(key)) return;
+                if (aid) {
+                    byDisplay.set(key, {mode: 'id', value: aid, label});
+                } else {
+                    byDisplay.set(key, {mode: 'name', value: label, label});
+                }
+            });
+            const entries = Array.from(byDisplay.values()).sort((a, b) =>
+                a.label.localeCompare(b.label)
+            );
+            entries.forEach((entry) => {
+                if (entry.mode === 'id') {
+                    add(`id:${entry.value}`, entry.label);
+                } else {
+                    add(`name:${encodeURIComponent(entry.value)}`, entry.label);
+                }
+            });
+            sel.innerHTML = '';
+            sel.appendChild(frag);
+            const valid = new Set();
+            sel.querySelectorAll('option').forEach((o) => valid.add(o.value));
+            if (prev && valid.has(prev)) {
+                sel.value = prev;
+            } else if (prev) {
+                const keep = document.createElement('option');
+                keep.value = prev;
+                keep.textContent = 'Previously selected';
+                sel.appendChild(keep);
+                sel.value = prev;
+            }
+        }
+
+        function filterPendingFaceRowsForMedia(rows) {
+            if (!mediaFiltersApplied || !Array.isArray(rows)) {
+                return rows || [];
+            }
+            const cameraSelect = document.getElementById('media-camera');
+            const stageSelect = document.getElementById('media-stage');
+            const kindSelect = document.getElementById('media-kind');
+            const fromInput = document.getElementById('media-from');
+            const toInput = document.getElementById('media-to');
+            const faceSel = document.getElementById('media-face-filter');
+            const cameraId = cameraSelect ? String(cameraSelect.value || '').trim() : '';
+            const stage = stageSelect ? String(stageSelect.value || '').trim() : '';
+            const kind = kindSelect ? String(kindSelect.value || '').trim() : '';
+            const fromValue = fromInput ? String(fromInput.value || '').trim() : '';
+            const toValue = toInput ? String(toInput.value || '').trim() : '';
+            const fv = faceSel ? String(faceSel.value || '').trim() : '';
+
+            let out = rows.slice();
+            if (cameraId) {
+                out = out.filter((r) => String(r.camera_id || '') === cameraId);
+            }
+            if (fromValue) {
+                const t0 = new Date(fromValue).getTime();
+                out = out.filter((r) => new Date(r.created_at || 0).getTime() >= t0);
+            }
+            if (toValue) {
+                const t1 = new Date(toValue).getTime();
+                out = out.filter((r) => new Date(r.created_at || 0).getTime() <= t1);
+            }
+            if (stage && stage !== 'face_detection') {
+                out = [];
+            }
+            if (kind && kind !== 'jpeg') {
+                out = [];
+            }
+            if (fv === 'open') {
+                out = out.filter((r) => String(r.status || '') === 'open');
+            } else if (fv === 'ignored') {
+                out = out.filter((r) => String(r.status || '') === 'ignored');
+            } else if (fv.startsWith('id:')) {
+                const wantId = fv.slice(3);
+                out = out.filter(
+                    (r) =>
+                        String(r.status || '') === 'assigned' &&
+                        String(r.assigned_identity_id || '') === wantId
+                );
+            } else if (fv.startsWith('name:')) {
+                let raw = '';
+                try {
+                    raw = decodeURIComponent(fv.slice(5));
+                } catch (e) {
+                    raw = '';
+                }
+                if (raw) {
+                    out = out.filter((r) => {
+                        if (String(r.status || '') !== 'assigned') {
+                            return false;
+                        }
+                        return String(r.assigned_display_name || '').trim() === raw;
+                    });
+                }
+            }
+            return out;
+        }
+
+        function syncMediaFilterButton() {
+            const btn = document.getElementById('media-apply-btn');
+            if (!btn) return;
+            if (mediaFiltersApplied) {
+                btn.textContent = 'Remove';
+                btn.classList.remove('btn-secondary');
+                btn.classList.add('btn-danger');
+            } else {
+                btn.textContent = 'Apply';
+                btn.classList.remove('btn-danger');
+                btn.classList.add('btn-secondary');
+            }
+        }
+
+        function toggleMediaFilters() {
+            const cameraSelect = document.getElementById('media-camera');
+            const stageSelect = document.getElementById('media-stage');
+            const kindSelect = document.getElementById('media-kind');
+            const fromInput = document.getElementById('media-from');
+            const toInput = document.getElementById('media-to');
+            const faceFilter = document.getElementById('media-face-filter');
+            if (mediaFiltersApplied) {
+                mediaFiltersApplied = false;
+                if (cameraSelect) cameraSelect.value = '';
+                if (stageSelect) stageSelect.value = '';
+                if (kindSelect) kindSelect.value = '';
+                if (fromInput) fromInput.value = '';
+                if (toInput) toInput.value = '';
+                if (faceFilter) faceFilter.value = '';
+            } else {
+                mediaFiltersApplied = true;
+            }
+            syncMediaFilterButton();
+            fetchMedia();
+        }
+
+        async function fetchRuntimeStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const statusNode = document.getElementById('runtime-status');
+                if (!response.ok) {
+                    statusNode.textContent = 'Runtime status unavailable';
+                    syncPauseToggle(false, false);
+                    updateCameraOptions([]);
+                    return;
+                }
+                const data = await response.json();
+                const paused = !!data.paused;
+                statusNode.textContent = paused ? 'Runtime status: paused' : 'Runtime status: active';
+                syncPauseToggle(paused, true);
+                updateCameraOptions(data.camera_ids || []);
+            } catch (error) {
+                console.error('Error fetching runtime status:', error);
+                syncPauseToggle(false, false);
+            }
+        }
+
+        async function togglePauseState() {
+            const btn = document.getElementById('pause-toggle-btn');
+            if (!btn || btn.disabled) {
+                return;
+            }
+            const currentlyPaused = btn.dataset.paused === 'true';
+            await setPaused(!currentlyPaused);
+        }
+
+        async function setPaused(paused) {
+            try {
+                const response = await fetch('/api/control/pause', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({paused})
+                });
+                const out = await response.json();
+                if (!response.ok) {
+                    showToast(out.detail || 'Pause/resume failed', 'error');
+                    return;
+                }
+                showToast(out.paused ? 'Patrol loop paused' : 'Patrol loop resumed');
+                fetchRuntimeStatus();
+            } catch (error) {
+                console.error('Error setting pause state:', error);
+                showToast('Cannot reach control endpoint', 'error');
+            }
+        }
+
+        async function runSnap() {
+            const select = document.getElementById('snap-camera-id');
+            const cameraId = (select && select.value ? select.value : '').trim();
+            if (!cameraId) {
+                showToast('No camera available for snap', 'error');
+                return;
+            }
+            try {
+                const response = await fetch(`/api/control/snap?camera_id=${encodeURIComponent(cameraId)}`, {method: 'POST'});
+                const out = await response.json();
+                if (!response.ok) {
+                    showToast(out.detail || 'Snap failed', 'error');
+                    return;
+                }
+                document.getElementById('snap-result').textContent = `Saved: ${out.path_rel}`;
+                showToast(`Snapshot captured for ${out.camera_id}`);
+            } catch (error) {
+                console.error('Error running snap:', error);
+                showToast('Cannot reach snap endpoint', 'error');
+            }
+        }
+
+        async function logoutCurrent() {
+            await fetch('/api/auth/dashboard/logout', {method: 'POST'});
+            window.location.href = '/';
+        }
+
+        async function logoutAll() {
+            try {
+                const response = await fetch('/api/auth/dashboard/logout_all', {method: 'POST'});
+                const out = await response.json();
+                if (!response.ok) {
+                    showToast(out.detail || 'Cannot logout all sessions', 'error');
+                    return;
+                }
+                showToast('All sessions revoked. Redirecting...');
+                setTimeout(() => { window.location.href = '/'; }, 600);
+            } catch (error) {
+                console.error('Error logging out all sessions:', error);
+                showToast('Cannot reach logout-all endpoint', 'error');
+            }
+        }
+
+        async function fetchMetrics() {
+            try {
+                const response = await fetch('/api/metrics');
+                if (!response.ok) {
+                    showToast('Failed to fetch metrics', 'error');
+                    return;
+                }
+                const data = await response.json();
+
+                document.getElementById('uptime').textContent = formatUptime(data.uptime_seconds);
+                document.getElementById('total-events').textContent = data.total_events;
+                document.getElementById('motion-events').textContent = data.motion_events;
+                document.getElementById('person-events').textContent = data.person_events;
+                document.getElementById('face-events').textContent = data.face_events;
+                document.getElementById('error-events').textContent = data.error_events;
+
+                // Update services
+                const servicesDiv = document.getElementById('services');
+                let html = '<div class="panel-table-wrap"><table><tr><th>Service</th><th>Status</th><th>Last Check</th><th>Uptime</th></tr>';
+                for (const [name, status] of Object.entries(data.services)) {
+                    const statusClass = status.is_running ? 'status-running' : 'status-stopped';
+                    const statusText = status.is_running ? 'Running' : 'Stopped';
+                    const uptime = status.uptime_seconds ? formatUptime(status.uptime_seconds) : '-';
+                    html += `<tr>
+                        <td>${name}</td>
+                        <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                        <td>${formatTime(status.last_check)}</td>
+                        <td>${uptime}</td>
+                    </tr>`;
+                }
+                html += '</table></div>';
+                servicesDiv.innerHTML = html;
+            } catch (error) {
+                console.error('Error fetching metrics:', error);
+                showToast('Error fetching metrics', 'error');
+            }
+        }
+
+        function renderRecentEventsPanel() {
+            const eventsDiv = document.getElementById('events');
+            if (!eventsDiv) {
+                return;
+            }
+            eventsDiv.classList.remove('muted');
+            if (!recentEventsCache.length) {
+                eventsDiv.innerHTML = '<p>No events in the last 24 hours.</p>';
+                return;
+            }
+            const slice = recentEventsCache.slice(0, recentEventsVisibleCount);
+            let html = '<div class="events-panel"><div class="events-scroll panel-table-wrap"><table class="events-table"><tr><th>Time</th><th>Type</th><th>Message</th><th>Severity</th><th>Camera</th></tr>';
+            slice.forEach((event) => {
+                const typeClass = `event-${event.event_type}`;
+                html += `<tr>
+                        <td>${formatTime(event.timestamp)}</td>
+                        <td><span class="event-type ${typeClass}">${event.event_type}</span></td>
+                        <td>${event.message}</td>
+                        <td>${event.severity}</td>
+                        <td>${event.camera_id || '-'}</td>
+                    </tr>`;
+            });
+            html += '</table></div>';
+            const remaining = recentEventsCache.length - recentEventsVisibleCount;
+            if (remaining > 0) {
+                html += `<div class="events-more-wrap"><button type="button" class="btn btn-secondary" id="events-more-btn">Show more (${remaining} more)</button></div>`;
+            }
+            html += '</div>';
+            eventsDiv.innerHTML = html;
+            const btn = document.getElementById('events-more-btn');
+            if (btn) {
+                btn.addEventListener('click', () => {
+                    recentEventsVisibleCount = Math.min(
+                        recentEventsVisibleCount + RECENT_EVENTS_PAGE,
+                        recentEventsCache.length
+                    );
+                    renderRecentEventsPanel();
+                });
+            }
+        }
+
+        async function fetchEvents() {
+            try {
+                const response = await fetch('/api/events?hours=24');
+                if (!response.ok) {
+                    showToast('Failed to fetch events', 'error');
+                    return;
+                }
+                const events = await response.json();
+                recentEventsCache = Array.isArray(events) ? events.slice(0, 50) : [];
+                recentEventsVisibleCount = Math.min(
+                    RECENT_EVENTS_PAGE,
+                    Math.max(recentEventsCache.length, 0)
+                );
+                renderRecentEventsPanel();
+            } catch (error) {
+                console.error('Error fetching events:', error);
+                showToast('Error fetching events', 'error');
+            }
+        }
+
+        async function fetchConfig() {
+            try {
+                const [configResp, traitsResp] = await Promise.all([
+                    fetch('/api/config'),
+                    fetch('/api/config/traits')
+                ]);
+                if (!configResp.ok || !traitsResp.ok) {
+                    showToast('Failed to fetch configuration', 'error');
+                    return;
+                }
+                const config = await configResp.json();
+                const traits = await traitsResp.json();
+
+                const configDiv = document.getElementById('config');
+                let html = '<div class="panel-table-wrap"><table><tr><th>Key</th><th>Mode</th><th>Value</th><th>Action</th></tr>';
+                for (const [key, value] of Object.entries(config)) {
+                    const trait = (traits && traits[key]) ? traits[key] : {};
+                    const mode = trait.requires_restart ? 'restart-required' : 'hot-swappable';
+                    const keyEsc = JSON.stringify(key);
+                    html += `<tr>
+                        <td>${key}</td>
+                        <td>${mode}</td>
+                        <td><code>${JSON.stringify(value)}</code></td>
+                        <td>
+                            <div class="config-form">
+                                <input class="input" type="text" id="config-${key}" placeholder="New value (YAML)">
+                                <button type="button" class="btn btn-secondary" onclick="updateConfig(${keyEsc})">Update</button>
+                                <button type="button" class="btn btn-danger" title="Remove SQLite override for this key; value falls back to recipe" onclick="resetConfigKey(${keyEsc})">Reset</button>
+                            </div>
+                        </td>
+                    </tr>`;
+                }
+                html += '</table></div>';
+                configDiv.innerHTML = html;
+            } catch (error) {
+                console.error('Error fetching config:', error);
+                showToast('Error fetching configuration', 'error');
+            }
+        }
+
+        async function fetchMedia() {
+            try {
+                const cameraSelect = document.getElementById('media-camera');
+                const stageSelect = document.getElementById('media-stage');
+                const kindSelect = document.getElementById('media-kind');
+                const fromInput = document.getElementById('media-from');
+                const toInput = document.getElementById('media-to');
+                const cameraId = cameraSelect ? String(cameraSelect.value || '').trim() : '';
+                const stage = stageSelect ? String(stageSelect.value || '').trim() : '';
+                const kind = kindSelect ? String(kindSelect.value || '').trim() : '';
+                const fromValue = fromInput ? String(fromInput.value || '').trim() : '';
+                const toValue = toInput ? String(toInput.value || '').trim() : '';
+                const params = new URLSearchParams({hours: '168', limit: '12', offset: '0'});
+                if (mediaFiltersApplied && cameraId) {
+                    params.set('camera_id', cameraId);
+                }
+                if (mediaFiltersApplied && stage) {
+                    params.set('stage', stage);
+                }
+                if (mediaFiltersApplied && kind) {
+                    params.set('kind', kind);
+                }
+                if (mediaFiltersApplied && fromValue) {
+                    params.set('created_from', new Date(fromValue).toISOString());
+                }
+                if (mediaFiltersApplied && toValue) {
+                    params.set('created_to', new Date(toValue).toISOString());
+                }
+                const response = await fetch(`/api/media?${params.toString()}`);
+                const mediaGrid = document.getElementById('media-grid');
+                if (!mediaGrid) {
+                    return;
+                }
+                if (!response.ok) {
+                    mediaGrid.innerHTML = '<div class="media-empty">Media unavailable for this account.</div>';
+                    return;
+                }
+                const media = await response.json();
+                latestMediaRows = Array.isArray(media) ? media : [];
+                await fetchPendingFacesForMedia();
+                populateMediaFaceFilterOptions();
+                const baseRows = latestMediaRows.map((item) => ({
+                    source: 'media',
+                    id: item.id,
+                    camera_id: item.camera_id,
+                    stage: item.stage || 'detection',
+                    kind: item.kind || 'jpeg',
+                    created_at: item.created_at,
+                    thumb_src: `/api/media/${item.id}/file`,
+                    onClick: `openMediaOverlay(${item.id})`,
+                    status_chip: ''
+                }));
+                const filteredPending = filterPendingFaceRowsForMedia(pendingFaceRows);
+                const faceRows = filteredPending.map((row) => ({
+                    source: 'pending_face',
+                    id: row.id,
+                    camera_id: row.camera_id,
+                    stage: 'face_detection',
+                    kind: 'jpeg',
+                    created_at: row.created_at,
+                    thumb_src: `/api/face/pending/${row.id}/file`,
+                    onClick: `openPendingFaceOverlay('${row.id}')`,
+                    status_chip: row.status || 'open',
+                    identity_chip: row.assigned_display_name || ''
+                }));
+                const facetFaceStubs = pendingFaceRows.map(() => ({
+                    source: 'pending_face',
+                    stage: 'face_detection',
+                    kind: 'jpeg'
+                }));
+                updateMediaFacetOptions(baseRows.concat(facetFaceStubs));
+                const merged = baseRows.concat(faceRows).sort((a, b) => {
+                    const ta = new Date(a.created_at || 0).getTime();
+                    const tb = new Date(b.created_at || 0).getTime();
+                    return tb - ta;
+                }).slice(0, 18);
+                if (!merged.length) {
+                    mediaGrid.innerHTML = '<div class="media-empty">No media in the selected window.</div>';
+                    return;
+                }
+                mediaGrid.innerHTML = merged.map((item) => {
+                    const when = formatTime(item.created_at);
+                    const statusChip = item.status_chip ? `<span class="chip">${item.status_chip}</span>` : '';
+                    const identityChip = item.identity_chip ? `<span class="chip">${item.identity_chip}</span>` : '';
+                    return `
+                        <div class="media-card" role="button" tabindex="0" onclick="${item.onClick}" onkeydown="if(event.key==='Enter'){${item.onClick}}">
+                            <img class="media-thumb" src="${item.thumb_src}" alt="${item.camera_id} ${item.stage}" loading="lazy" />
+                            <div class="media-card-body">
+                                <div class="chip-row">
+                                    <span class="chip">${item.camera_id || 'unknown camera'}</span>
+                                    <span class="chip">${item.stage || 'stage'}</span>
+                                    <span class="chip">${item.kind || 'kind'}</span>
+                                    ${statusChip}
+                                    ${identityChip}
+                                </div>
+                                <div class="status-line">${when}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Error fetching media:', error);
+            }
+        }
+
+        async function fetchPendingFacesForMedia() {
+            try {
+                const params = new URLSearchParams({status: 'all', limit: '200'});
+                const response = await fetch(`/api/face/pending?${params.toString()}`);
+                if (!response.ok) {
+                    pendingFaceRows = [];
+                    return;
+                }
+                const rows = await response.json();
+                pendingFaceRows = Array.isArray(rows) ? rows : [];
+            } catch (error) {
+                console.error('Error fetching pending faces:', error);
+                pendingFaceRows = [];
+            }
+        }
+
+        async function fetchKnownIdentities() {
+            try {
+                const response = await fetch('/api/identities');
+                if (!response.ok) {
+                    knownIdentities = [];
+                    populateMediaFaceFilterOptions();
+                    return;
+                }
+                const rows = await response.json();
+                knownIdentities = Array.isArray(rows) ? rows : [];
+            } catch (error) {
+                console.error('Error fetching identities:', error);
+                knownIdentities = [];
+            }
+            populateMediaFaceFilterOptions();
+        }
+
+        function closeMediaOverlay(event) {
+            if (event && event.target && event.target.id !== 'media-overlay') {
+                return;
+            }
+            const overlay = document.getElementById('media-overlay');
+            const image = document.getElementById('overlay-image');
+            const video = document.getElementById('overlay-video');
+            const videoWrap = document.getElementById('overlay-video-wrap');
+            const faceActions = document.getElementById('overlay-face-actions');
+            const identitySuggestions = document.getElementById('overlay-identity-suggestions');
+            const assignInput = document.getElementById('overlay-assign-name');
+            if (video) {
+                video.pause();
+                video.removeAttribute('src');
+            }
+            if (image) {
+                image.removeAttribute('src');
+            }
+            if (videoWrap) {
+                videoWrap.style.display = 'none';
+            }
+            if (image) {
+                image.style.display = 'block';
+            }
+            if (overlay) {
+                overlay.classList.remove('show');
+            }
+            if (faceActions) {
+                faceActions.classList.remove('show');
+            }
+            const openFaceRow = document.getElementById('overlay-face-open-actions');
+            const assignedFaceRow = document.getElementById('overlay-face-assigned-actions');
+            if (openFaceRow) {
+                openFaceRow.style.display = 'contents';
+            }
+            if (assignedFaceRow) {
+                assignedFaceRow.style.display = 'none';
+            }
+            if (identitySuggestions) {
+                identitySuggestions.classList.remove('show');
+                identitySuggestions.innerHTML = '';
+            }
+            if (assignInput) {
+                assignInput.value = '';
+            }
+            const reassignInput = document.getElementById('overlay-reassign-name');
+            if (reassignInput) {
+                reassignInput.value = '';
+            }
+            overlayPendingFaceId = null;
+            overlayPendingFaceStatus = '';
+        }
+
+        function openMediaOverlay(artifactId) {
+            const row = latestMediaRows.find((m) => Number(m.id) === Number(artifactId));
+            if (!row) {
+                showToast('Media details unavailable', 'error');
+                return;
+            }
+            const overlay = document.getElementById('media-overlay');
+            const title = document.getElementById('overlay-title');
+            const image = document.getElementById('overlay-image');
+            const video = document.getElementById('overlay-video');
+            const videoWrap = document.getElementById('overlay-video-wrap');
+            const meta = document.getElementById('overlay-meta');
+            const faceActions = document.getElementById('overlay-face-actions');
+            const src = `/api/media/${row.id}/file`;
+            const kind = String(row.kind || '').toLowerCase();
+            const isVideo = kind.includes('mp4') || kind.includes('video') || String(row.path_rel || '').toLowerCase().endsWith('.mp4');
+
+            title.textContent = `${row.camera_id || 'camera'} - ${row.stage || 'stage'} - ${row.kind || 'media'}`;
+            if (isVideo) {
+                image.style.display = 'none';
+                videoWrap.style.display = 'block';
+                video.src = src;
+            } else {
+                videoWrap.style.display = 'none';
+                image.style.display = 'block';
+                image.src = src;
+            }
+            meta.textContent = JSON.stringify({
+                id: row.id,
+                camera_id: row.camera_id,
+                stage: row.stage,
+                kind: row.kind,
+                path_rel: row.path_rel,
+                created_at: row.created_at,
+                size_bytes: row.size_bytes,
+                metadata: row.metadata || {}
+            }, null, 2);
+            if (faceActions) {
+                faceActions.classList.remove('show');
+            }
+            overlayPendingFaceId = null;
+            overlayPendingFaceStatus = '';
+            overlay.classList.add('show');
+        }
+
+        function openPendingFaceOverlay(pendingId) {
+            const row = pendingFaceRows.find((m) => String(m.id) === String(pendingId));
+            if (!row) {
+                showToast('Pending face details unavailable', 'error');
+                return;
+            }
+            const overlay = document.getElementById('media-overlay');
+            const title = document.getElementById('overlay-title');
+            const image = document.getElementById('overlay-image');
+            const videoWrap = document.getElementById('overlay-video-wrap');
+            const meta = document.getElementById('overlay-meta');
+            const faceActions = document.getElementById('overlay-face-actions');
+            const assignInput = document.getElementById('overlay-assign-name');
+            const identitySuggestions = document.getElementById('overlay-identity-suggestions');
+            const src = `/api/face/pending/${row.id}/file`;
+            if (String(row.status || '') === 'assigned' && row.assigned_display_name) {
+                title.textContent = `${row.camera_id || 'camera'} - face (assigned: ${row.assigned_display_name})`;
+            } else {
+                title.textContent = `${row.camera_id || 'camera'} - pending face`;
+            }
+            videoWrap.style.display = 'none';
+            image.style.display = 'block';
+            image.src = src;
+            meta.textContent = JSON.stringify({
+                id: row.id,
+                camera_id: row.camera_id,
+                path_rel: row.path_rel,
+                champion_frame_index: row.champion_frame_index,
+                created_at: row.created_at,
+                expires_at: row.expires_at,
+                status: row.status,
+                assigned_identity_id: row.assigned_identity_id || null,
+                assigned_display_name: row.assigned_display_name || null
+            }, null, 2);
+            overlayPendingFaceId = String(row.id);
+            overlayPendingFaceStatus = String(row.status || 'open');
+            const openFaceRow = document.getElementById('overlay-face-open-actions');
+            const assignedFaceRow = document.getElementById('overlay-face-assigned-actions');
+            const reassignInput = document.getElementById('overlay-reassign-name');
+            if (faceActions) {
+                if (overlayPendingFaceStatus === 'open') {
+                    if (openFaceRow) {
+                        openFaceRow.style.display = 'contents';
+                    }
+                    if (assignedFaceRow) {
+                        assignedFaceRow.style.display = 'none';
+                    }
+                    faceActions.classList.add('show');
+                    if (assignInput) {
+                        assignInput.value = '';
+                    }
+                    renderIdentitySuggestions(identitySuggestions, 'open');
+                } else if (overlayPendingFaceStatus === 'assigned') {
+                    if (openFaceRow) {
+                        openFaceRow.style.display = 'none';
+                    }
+                    if (assignedFaceRow) {
+                        assignedFaceRow.style.display = 'block';
+                    }
+                    faceActions.classList.add('show');
+                    if (reassignInput) {
+                        reassignInput.value = '';
+                    }
+                    renderIdentitySuggestions(identitySuggestions, 'assigned');
+                } else {
+                    faceActions.classList.remove('show');
+                    if (openFaceRow) {
+                        openFaceRow.style.display = 'contents';
+                    }
+                    if (assignedFaceRow) {
+                        assignedFaceRow.style.display = 'none';
+                    }
+                    if (identitySuggestions) {
+                        identitySuggestions.classList.remove('show');
+                        identitySuggestions.innerHTML = '';
+                    }
+                }
+            }
+            overlay.classList.add('show');
+        }
+
+        function identitiesByDisplayNameKey() {
+            const sorted = [...(knownIdentities || [])].sort((a, b) =>
+                String(a.id || '').localeCompare(String(b.id || ''))
+            );
+            const byDisplayKey = new Map();
+            for (const ident of sorted) {
+                const name = String(ident.display_name || '').trim();
+                const key = name.toLowerCase();
+                if (!key) continue;
+                if (!byDisplayKey.has(key)) {
+                    byDisplayKey.set(key, ident);
+                }
+            }
+            return byDisplayKey;
+        }
+
+        function lookupIdentityByTypedName(trimmed) {
+            if (!trimmed) {
+                return null;
+            }
+            return identitiesByDisplayNameKey().get(trimmed.toLowerCase()) || null;
+        }
+
+        function overlayAssignNameKeydown(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                assignOverlayPendingFace();
+            }
+        }
+
+        function overlayReassignNameKeydown(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                reassignOverlayAssignedFace();
+            }
+        }
+
+        function renderIdentitySuggestions(container, mode) {
+            if (!container) return;
+            const m = mode === 'assigned' ? 'assigned' : 'open';
+            container.innerHTML = '';
+            if (!Array.isArray(knownIdentities) || knownIdentities.length === 0) {
+                container.classList.remove('show');
+                return;
+            }
+            const byDisplayKey = identitiesByDisplayNameKey();
+            let currentAssignedIdentityId = '';
+            if (m === 'assigned' && overlayPendingFaceId) {
+                const prow = pendingFaceRows.find((r) => String(r.id) === String(overlayPendingFaceId));
+                if (prow) {
+                    currentAssignedIdentityId = String(prow.assigned_identity_id || '');
+                }
+            }
+            byDisplayKey.forEach((ident) => {
+                if (m === 'assigned' && currentAssignedIdentityId && String(ident.id || '') === currentAssignedIdentityId) {
+                    return;
+                }
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'btn btn-secondary identity-btn';
+                btn.textContent = String(ident.display_name || ident.id || 'identity');
+                btn.title = String(ident.id || '');
+                btn.addEventListener('click', () => {
+                    if (m === 'assigned') {
+                        reassignOverlayAssignedFaceToIdentity(String(ident.id || ''), String(ident.display_name || 'identity'));
+                    } else {
+                        assignOverlayPendingFaceToIdentity(String(ident.id || ''), String(ident.display_name || 'identity'));
+                    }
+                });
+                container.appendChild(btn);
+            });
+            container.classList.add('show');
+        }
+
+        async function assignOverlayPendingFace() {
+            if (!overlayPendingFaceId || overlayPendingFaceStatus !== 'open') {
+                return;
+            }
+            const input = document.getElementById('overlay-assign-name');
+            const name = input ? String(input.value || '').trim() : '';
+            if (!name) {
+                showToast('Insert an identity name to assign', 'error');
+                return;
+            }
+            const hit = lookupIdentityByTypedName(name);
+            if (hit) {
+                await assignOverlayPendingFaceToIdentity(String(hit.id || ''), String(hit.display_name || name));
+                return;
+            }
+            try {
+                const response = await fetch(`/api/face/pending/${encodeURIComponent(overlayPendingFaceId)}/assign`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({new_display_name: name})
+                });
+                const out = await response.json();
+                if (!response.ok) {
+                    showToast(out.detail || 'Assign failed', 'error');
+                    return;
+                }
+                showToast(`Assigned to ${name}`);
+                closeMediaOverlay();
+                fetchMedia();
+                fetchKnownIdentities();
+            } catch (error) {
+                console.error('Error assigning pending face:', error);
+                showToast('Cannot assign pending face', 'error');
+            }
+        }
+
+        async function assignOverlayPendingFaceToIdentity(identityId, displayName) {
+            if (!overlayPendingFaceId || overlayPendingFaceStatus !== 'open' || !identityId) {
+                return;
+            }
+            try {
+                const response = await fetch(`/api/face/pending/${encodeURIComponent(overlayPendingFaceId)}/assign`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({identity_id: identityId})
+                });
+                const out = await response.json();
+                if (!response.ok) {
+                    showToast(out.detail || 'Assign failed', 'error');
+                    return;
+                }
+                showToast(`Assigned to ${displayName}`);
+                closeMediaOverlay();
+                fetchMedia();
+            } catch (error) {
+                console.error('Error assigning pending face to identity:', error);
+                showToast('Cannot assign pending face', 'error');
+            }
+        }
+
+        async function reassignOverlayAssignedFace() {
+            if (!overlayPendingFaceId || overlayPendingFaceStatus !== 'assigned') {
+                return;
+            }
+            const input = document.getElementById('overlay-reassign-name');
+            const name = input ? String(input.value || '').trim() : '';
+            if (!name) {
+                showToast('Enter a name or pick one below', 'error');
+                return;
+            }
+            const hit = lookupIdentityByTypedName(name);
+            if (hit) {
+                const hid = String(hit.id || '');
+                const prow = pendingFaceRows.find((r) => String(r.id) === String(overlayPendingFaceId));
+                if (prow && String(prow.assigned_identity_id || '') === hid) {
+                    showToast('This face is already under that identity', 'error');
+                    return;
+                }
+                await reassignOverlayAssignedFaceToIdentity(hid, String(hit.display_name || name));
+                return;
+            }
+            try {
+                const response = await fetch(`/api/face/pending/${encodeURIComponent(overlayPendingFaceId)}/reassign`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({new_display_name: name})
+                });
+                const out = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    showToast(out.detail || 'Reassign failed', 'error');
+                    return;
+                }
+                let msg = `Moved to ${name}`;
+                if (out.previous_identity_removed) {
+                    msg += ' — empty identity removed';
+                }
+                showToast(msg);
+                closeMediaOverlay();
+                fetchMedia();
+                fetchKnownIdentities();
+            } catch (error) {
+                console.error('Error reassigning face:', error);
+                showToast('Cannot reassign face', 'error');
+            }
+        }
+
+        async function reassignOverlayAssignedFaceToIdentity(identityId, displayName) {
+            if (!overlayPendingFaceId || overlayPendingFaceStatus !== 'assigned' || !identityId) {
+                return;
+            }
+            try {
+                const response = await fetch(`/api/face/pending/${encodeURIComponent(overlayPendingFaceId)}/reassign`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({identity_id: identityId})
+                });
+                const out = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    showToast(out.detail || 'Reassign failed', 'error');
+                    return;
+                }
+                let msg = `Moved to ${displayName}`;
+                if (out.previous_identity_removed) {
+                    msg += ' — empty identity removed';
+                }
+                showToast(msg);
+                closeMediaOverlay();
+                fetchMedia();
+                fetchKnownIdentities();
+            } catch (error) {
+                console.error('Error reassigning face to identity:', error);
+                showToast('Cannot reassign face', 'error');
+            }
+        }
+
+        async function unassignOverlayAssignedFace() {
+            if (!overlayPendingFaceId || overlayPendingFaceStatus !== 'assigned') {
+                return;
+            }
+            try {
+                const response = await fetch(`/api/face/pending/${encodeURIComponent(overlayPendingFaceId)}/unassign`, {
+                    method: 'POST'
+                });
+                const out = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    showToast(out.detail || 'Unassign failed', 'error');
+                    return;
+                }
+                let msg = 'Marked unknown (open triage)';
+                if (out.identity_removed) {
+                    msg += ' — empty identity removed';
+                }
+                showToast(msg);
+                closeMediaOverlay();
+                fetchMedia();
+                fetchKnownIdentities();
+            } catch (error) {
+                console.error('Error unassigning face:', error);
+                showToast('Cannot unassign face', 'error');
+            }
+        }
+
+        async function ignoreOverlayPendingFace() {
+            if (!overlayPendingFaceId || overlayPendingFaceStatus !== 'open') {
+                return;
+            }
+            try {
+                const response = await fetch(`/api/face/pending/${encodeURIComponent(overlayPendingFaceId)}/ignore`, {
+                    method: 'POST'
+                });
+                const out = await response.json();
+                if (!response.ok) {
+                    showToast(out.detail || 'Ignore failed', 'error');
+                    return;
+                }
+                showToast('Pending face ignored');
+                closeMediaOverlay();
+                fetchMedia();
+            } catch (error) {
+                console.error('Error ignoring pending face:', error);
+                showToast('Cannot ignore pending face', 'error');
+            }
+        }
+
+        async function updateConfig(key) {
+            const input = document.getElementById(`config-${key}`);
+            if (!input) {
+                showToast('Missing config field', 'error');
+                return;
+            }
+            const raw = input.value;
+            const trimmed = String(raw).trim();
+            let valuePayload = trimmed;
+            if (trimmed !== '') {
+                try {
+                    valuePayload = JSON.parse(trimmed);
+                } catch (e) {
+                    valuePayload = trimmed;
+                }
+            }
+
+            try {
+                const response = await fetch(`/api/config/${encodeURIComponent(key)}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({value: valuePayload})
+                });
+
+                if (response.ok) {
+                    const out = await response.json();
+                    const rs = out.restart_schedule || {};
+                    if (rs.scheduled) {
+                        showToast(`Config updated, restart ${rs.newly_scheduled ? 'scheduled' : 'already scheduled'}.`);
+                    } else {
+                        showToast('Configuration updated successfully');
+                    }
+                    fetchConfig();
+                } else {
+                    const err = await response.json().catch(() => ({}));
+                    const detail = Array.isArray(err.detail)
+                        ? err.detail.map((d) => d.msg || d).join(' ')
+                        : (err.detail || 'Failed to update configuration');
+                    showToast(detail, 'error');
+                }
+            } catch (error) {
+                console.error('Error updating config:', error);
+                showToast('Error updating configuration', 'error');
+            }
+        }
+
+        async function resetConfigKey(key) {
+            try {
+                const response = await fetch('/api/config/reset', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({key, reset_all: false})
+                });
+                const out = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    showToast(out.detail || 'Failed to reset configuration', 'error');
+                    return;
+                }
+                const removed = Number(out.removed || 0);
+                const rs = out.restart_schedule || {};
+                let msg = removed === 0
+                    ? 'No SQLite override for this key (already using recipe value).'
+                    : 'Override removed; value falls back to recipe.';
+                if (rs.scheduled) {
+                    msg += ` Restart ${rs.newly_scheduled ? 'scheduled' : 'already scheduled'}.`;
+                }
+                showToast(msg);
+                fetchConfig();
+            } catch (error) {
+                console.error('Error resetting config:', error);
+                showToast('Error resetting configuration', 'error');
+            }
+        }
+
+        async function refreshAll() {
+            fetchMetrics();
+            fetchEvents();
+            fetchConfig();
+            fetchRuntimeStatus();
+            await fetchKnownIdentities();
+            await fetchMedia();
+            fetchLastSeen();
+            fetchAnalyticsSeries();
+        }
+
+        function wireAnalyticsAndPresence() {
+            loadAnalyticsPrefs();
+            const ah = document.getElementById('analytics-hours');
+            if (ah) {
+                ah.addEventListener('change', () => {
+                    saveAnalyticsPrefs();
+                    fetchAnalyticsSeries();
+                });
+            }
+            ['series-motion', 'series-person', 'series-face', 'series-error', 'series-system'].forEach(
+                (id) => {
+                    const el = document.getElementById(id);
+                    if (el) {
+                        el.addEventListener('change', () => {
+                            saveAnalyticsPrefs();
+                            fetchAnalyticsSeries();
+                        });
+                    }
+                },
+            );
+            const lh = document.getElementById('last-seen-hours');
+            if (lh) {
+                lh.addEventListener('change', () => {
+                    saveAnalyticsPrefs();
+                    fetchLastSeen();
+                });
+            }
+            const retry = document.getElementById('analytics-retry');
+            if (retry) {
+                retry.addEventListener('click', () => fetchAnalyticsSeries());
+            }
+        }
+
+        // Initial load
+        syncMediaFilterButton();
+        wireAnalyticsAndPresence();
+        void refreshAll();
+
+        // Auto-refresh every 30 seconds
+        setInterval(refreshAll, 30000);
+
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                closeMediaOverlay();
+            }
+        });
+    </script>
+</body>
+</html>

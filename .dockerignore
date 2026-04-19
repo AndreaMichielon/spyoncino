@@ -1,0 +1,23 @@
+.git
+.github
+**/__pycache__
+**/*.pyc
+.venv
+venv
+.env
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+.coverage
+*.egg-info
+dist
+build
+
+# Large / local-only trees (mount at runtime)
+data
+assets
+
+# Tests and dev docs not needed in the image
+tests
+docs
